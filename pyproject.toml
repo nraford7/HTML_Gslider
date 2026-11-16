@@ -26,7 +26,7 @@ gslider = "gslider.cli:main"
 packages = ["gslider"]
 
 [tool.setuptools.package-data]
-gslider = ["layouts.yaml"]
+gslider = ["layouts.yaml", "measure.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
