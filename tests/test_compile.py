@@ -88,12 +88,13 @@ def test_title_three_lines_pushes_lead(layout):
 
 def test_object_ids_valid(layout):
     pat = re.compile(r"^s\d{2,}_[a-z]{3,}[a-z0-9_]*$")
-    for plans_ in (build("cols3.html", layout), build("cover_close.html", layout), build("overflow.html", layout)):
+    for plans_ in (build("cols3.html", layout), build("cover_close.html", layout), build("overflow.html", layout),
+                   build("tbl.html", layout)):
         ids = []
         for p in plans_:
             for r in p["requests"]:
                 (body,) = r.values()
-                if r.keys() & {"createSlide", "createShape", "createLine", "createImage"}:
+                if r.keys() & {"createSlide", "createShape", "createLine", "createImage", "createTable"}:
                     ids.append(body["objectId"])
         assert len(ids) == len(set(ids)), "duplicate objectIds"
         for oid in ids:
@@ -264,14 +265,15 @@ def test_full_width_image_near_floor_overflows(layout):
     assert C._full_image(s, img(png()), layout.floor - 100) == pytest.approx(layout.floor)
 
 
-def test_table_widths_normalised_and_narrow_column_rejected(layout):
-    cols = C._col_layout(layout, [0.9, 0.6], 2)  # 150%: scaled to 60/40
-    assert [round(w) for _, w in cols] == [round(0.6 * layout.title["w"] - 18), round(0.4 * layout.title["w"])]
-    assert cols[-1][0] + cols[-1][1] == pytest.approx(layout.margin + layout.title["w"])
+def test_table_widths_normalised_and_narrow_column_clamped(layout):
+    total = C.emu(800)
+    ws = C._table_widths([0.9, 0.6], 2, total)  # 150%: scaled to 60/40
+    assert sum(ws) == total and abs(ws[0] - round(0.6 * total)) <= 1
+    for ratios in ([0.7, 0.6, None], [0.99, 0.01]):  # a column squeezed to nothing / to 8pt
+        ws = C._table_widths(ratios, len(ratios), total)
+        assert sum(ws) == total and min(ws) >= C.MIN_COL_EMU, ws
     with pytest.raises(ValueError):
-        C._col_layout(layout, [0.7, 0.6, None], 3)  # the free column is squeezed to nothing
-    with pytest.raises(ValueError):
-        C._col_layout(layout, [0.99, 0.01], 2)
+        C._table_widths([], 30, total)  # 30 columns of 32pt do not fit in 800pt
 
 
 @pytest.mark.parametrize("image, why", [
@@ -389,6 +391,7 @@ def test_side_image_inside_floor_still_native(layout):
 
 
 BASELINE = Path(__file__).resolve().parent.parent / "out" / "ff-baseline-requests.json"
+CHANGED_BY_DESIGN = {"tbl.html"}  # native tables (Task 3) replace the text-box table
 
 
 @pytest.mark.skipif(not BASELINE.exists(), reason="no request baseline from fix/fresheyes-findings")
@@ -397,6 +400,8 @@ def test_fixture_requests_unchanged(layout):
     import json
     base = json.loads(BASELINE.read_text(encoding="utf-8"))
     for name, want in base.items():
+        if name in CHANGED_BY_DESIGN:
+            continue
         deck = parse((FIX / name).read_text(encoding="utf-8"))
         got = [p["requests"] for p in compile_deck(deck, layout, {"logo": "u", "logo_dark": "u"}, set())]
         assert json.loads(json.dumps(got)) == want, name
@@ -414,17 +419,28 @@ def _rows_block(bold=None, header_bold=None, style=None):
     return b
 
 
+def cell_bold(plan, oid, row, col):
+    """Bold ranges styled inside one table cell."""
+    return [(r["textRange"]["startIndex"], r["textRange"]["endIndex"]) for r in reqs_of(plan, "updateTextStyle")
+            if r["objectId"] == oid and r["fields"] == "bold"
+            and r.get("cellLocation") == {"rowIndex": row, "columnIndex": col}]
+
+
+def table_of(plan):
+    (t,) = [b for b in plan["boxes"] if b["role"] == "table"]
+    return t
+
+
 def test_rows_bold_ranges_applied(layout):
-    """Row 4 (compile half): a rows block's bold ranges become bold requests on that cell's box."""
+    """Row 4 (compile half): a rows block's bold ranges become bold requests on that table cell."""
     b = _rows_block(bold=[[[], [[0, 4]]], [[], []]], header_bold=[[], [[4, 1]]])
     plan = compile_slide(content_slide([b], raw=[]), layout, ASSETS, "dark")
     assert plan["status"] == "native", plan["reason"]
-    cell = [x for x in plan["boxes"] if x["text"] == "bold cell"][0]
-    assert bold_ranges(plan, cell["object_id"]) == [(0, 4)]
-    head = [x for x in plan["boxes"] if x["text"] == "Col B"][0]
-    assert bold_ranges(plan, head["object_id"]) == [(4, 5)]
-    others = [x for x in plan["boxes"] if x["object_id"] not in (cell["object_id"], head["object_id"])]
-    assert all(bold_ranges(plan, x["object_id"]) == [] for x in others)
+    oid = table_of(plan)["object_id"]
+    bolds = [r for r in reqs_of(plan, "updateTextStyle") if r["fields"] == "bold"]
+    assert len(bolds) == 2
+    assert cell_bold(plan, oid, 1, 1) == [(0, 4)]  # data row 0 sits under the header row
+    assert cell_bold(plan, oid, 0, 1) == [(4, 5)]
 
 
 def test_rows_timeline_bold_ranges_applied(layout):
@@ -461,6 +477,136 @@ def test_table_bold_end_to_end(layout):
     </div></div></div>"""
     plan = compile_deck(parse(html), layout, ASSETS, set())[0]
     assert plan["status"] == "native", plan["reason"]
-    bold = [r["updateTextStyle"] for r in plan["requests"]
-            if "updateTextStyle" in r and r["updateTextStyle"]["style"].get("bold")]
-    assert any(b["textRange"].get("startIndex", 0) == 0 and b["textRange"]["endIndex"] == 4 for b in bold)
+    assert cell_bold(plan, table_of(plan)["object_id"], 1, 1) == [(0, 4)]
+
+
+# ------------------------------------------------------------------ native tables (Task 3)
+
+def tbl(layout, **kw):
+    (plan,) = build("tbl.html", layout, **kw)
+    assert plan["status"] == "native", plan["reason"]
+    return plan
+
+
+def test_table_compiles_to_create_table(layout):
+    plan = tbl(layout)
+    (ct,) = reqs_of(plan, "createTable")
+    assert re.fullmatch(r"s01_table\d+", ct["objectId"])
+    assert (ct["rows"], ct["columns"]) == (3, 3)  # header + 2 data rows, 3 header cells
+    assert ct["elementProperties"]["pageObjectId"] == "s01_slide"
+    t = table_of(plan)
+    assert (t["rows"], t["cols"], t["object_id"]) == (3, 3, ct["objectId"])
+    cells = {(i["cellLocation"]["rowIndex"], i["cellLocation"]["columnIndex"]): i["text"]
+             for i in reqs_of(plan, "insertText") if i["objectId"] == ct["objectId"]}
+    assert cells[(0, 0)] == "Stage" and cells[(2, 0)] == "Stage 3"
+    assert cells[(1, 2)] == "A short review." and len(cells) == 9
+    assert all(i["insertionIndex"] == 0 for i in reqs_of(plan, "insertText") if "cellLocation" in i)
+    # no text boxes for the table's cells any more
+    assert not [b for b in plan["boxes"] if b["role"] in ("colhead", "number")]
+    # header cells styled colhead, body cells body
+    st = {(r["cellLocation"]["rowIndex"], r["cellLocation"]["columnIndex"]): r["style"]
+          for r in reqs_of(plan, "updateTextStyle") if r.get("cellLocation") and r["textRange"]["type"] == "ALL"}
+    assert st[(0, 1)]["fontSize"]["magnitude"] == layout.styles["colhead"]["dark"]["size"]
+    assert st[(2, 0)]["fontSize"]["magnitude"] == layout.styles["body"]["dark"]["size"]
+    assert st[(2, 0)]["foregroundColor"]["opaqueColor"]["rgbColor"] == colour(layout.styles["body"]["dark"]["color"])
+
+
+def test_table_skips_empty_cells(layout):
+    b = {"kind": "rows", "header": ["A", "B"], "widths": [], "rows": [["x", ""]]}
+    plan = compile_slide(content_slide([b], raw=["A", "B", "x"]), layout, ASSETS, "dark")
+    assert plan["status"] == "native", plan["reason"]
+    locs = [(i["cellLocation"]["rowIndex"], i["cellLocation"]["columnIndex"])
+            for i in reqs_of(plan, "insertText") if "cellLocation" in i]
+    assert locs == [(0, 0), (0, 1), (1, 0)]
+    assert all(r["cellLocation"] != {"rowIndex": 1, "columnIndex": 1}
+               for k in ("updateTextStyle", "updateParagraphStyle") for r in reqs_of(plan, k) if "cellLocation" in r)
+
+
+def test_table_column_widths_from_ratios(layout):
+    plan = tbl(layout)
+    (ct,) = reqs_of(plan, "createTable")
+    width = ct["elementProperties"]["size"]["width"]["magnitude"]
+    cols = sorted((r["columnIndices"], r["tableColumnProperties"]["columnWidth"]) for r in
+                  reqs_of(plan, "updateTableColumnProperties"))
+    assert [c[0] for c in cols] == [[0], [1], [2]]
+    assert all(c[1]["unit"] == "EMU" and c[1] == {"magnitude": c[1]["magnitude"], "unit": "EMU"} for c in cols)
+    assert all(r["fields"] == "columnWidth" for r in reqs_of(plan, "updateTableColumnProperties"))
+    ws = [c[1]["magnitude"] for c in cols]
+    assert abs(sum(ws) - width) <= 1
+    for w, r in zip(ws, (0.15, 0.33, 0.52)):  # the free column takes the rest
+        assert w == pytest.approx(r * width, abs=2)
+    # the table spans the measure; cell text lines up with the margin
+    pad = C.CELL_PAD
+    assert width == C.emu(layout.title["w"] + 2 * pad)
+    assert ct["elementProperties"]["transform"]["translateX"] == C.emu(layout.margin - pad)
+
+
+def test_narrow_column_clamped(layout):
+    b = {"kind": "rows", "header": ["Wide", "N"], "widths": [0.99, 0.01], "rows": [["a", "b"]]}
+    plan = compile_slide(content_slide([b], raw=["Wide", "N", "a", "b"]), layout, ASSETS, "dark")
+    assert plan["status"] == "native", plan["reason"]
+    (ct,) = reqs_of(plan, "createTable")
+    width = ct["elementProperties"]["size"]["width"]["magnitude"]
+    ws = {r["columnIndices"][0]: r["tableColumnProperties"]["columnWidth"]["magnitude"]
+          for r in reqs_of(plan, "updateTableColumnProperties")}
+    assert ws[1] >= 406400 and sum(ws.values()) == width
+
+
+def test_table_borders_and_fill(layout):
+    plan = tbl(layout)
+    oid = table_of(plan)["object_id"]
+    borders = {r.get("borderPosition", "ALL"): r for r in reqs_of(plan, "updateTableBorderProperties")}
+    assert all(r["objectId"] == oid for r in borders.values())
+    inner = borders["ALL"]["tableBorderProperties"]
+    assert inner["tableBorderFill"]["solidFill"]["color"]["rgbColor"] == colour(layout.rule["color"])
+    assert inner["tableBorderFill"]["solidFill"]["alpha"] == layout.rule["alpha"]
+    assert inner["weight"] == {"magnitude": 0.75, "unit": "PT"}
+    outer = borders["OUTER"]
+    assert outer["tableBorderProperties"]["tableBorderFill"]["solidFill"]["alpha"] == 0
+    assert "tableBorderFill.solidFill.alpha" in outer["fields"]
+    # ALL is applied before OUTER switches the frame off
+    kinds = [r.get("borderPosition", "ALL") for r in reqs_of(plan, "updateTableBorderProperties")]
+    assert kinds.index("ALL") < kinds.index("OUTER")
+    (cell,) = reqs_of(plan, "updateTableCellProperties")
+    assert cell["objectId"] == oid and "tableRange" not in cell
+    assert cell["tableCellProperties"] == {"tableCellBackgroundFill": {"propertyState": "NOT_RENDERED"}}
+    assert cell["fields"] == "tableCellBackgroundFill.propertyState"
+
+
+def test_table_bold_ranges_in_cells(layout):
+    html = """<div class="slide-wrap"><div class="slide dk"><div class="content">
+    <table class="tbl"><thead><tr><th>Head <b>B</b></th><th>H2</th></tr></thead>
+    <tbody><tr><td>x</td><td>say <b>this</b> 🚀 <b>that</b></td></tr></tbody></table>
+    </div></div></div>"""
+    plan = compile_deck(parse(html), layout, ASSETS, set())[0]
+    assert plan["status"] == "native", plan["reason"]
+    oid = table_of(plan)["object_id"]
+    assert cell_bold(plan, oid, 0, 0) == [(5, 6)]
+    assert cell_bold(plan, oid, 1, 1) == [(4, 8), (12, 16)]  # the emoji counts two UTF-16 units
+    assert cell_bold(plan, oid, 1, 0) == [] and cell_bold(plan, oid, 0, 1) == []
+
+
+def test_table_rows_sized_and_box_recorded(layout):
+    plan = tbl(layout)
+    t = table_of(plan)
+    (ct,) = reqs_of(plan, "createTable")
+    rows = reqs_of(plan, "updateTableRowProperties")
+    assert [r["rowIndices"] for r in rows] == [[0], [1], [2]]
+    hs = [r["tableRowProperties"]["minRowHeight"]["magnitude"] for r in rows]
+    assert ct["elementProperties"]["size"]["height"]["magnitude"] == pytest.approx(sum(hs), abs=3)
+    assert t["h"] == pytest.approx(sum(hs) / 12700, abs=0.01)
+    assert t["y"] == pytest.approx(ct["elementProperties"]["transform"]["translateY"] / 12700, abs=0.01)
+    assert "Stage 0" in t["text"] and "A strategy report." in t["text"]
+    # the note below starts below the table
+    note = box(plan, "note")
+    assert note["y"] + layout.inset > t["y"] + t["h"] - C.CELL_PAD
+
+
+def test_timeline_stays_text_boxes(layout):
+    (plan,) = build("timeline.html", layout)
+    assert plan["status"] == "native", plan["reason"]
+    assert reqs_of(plan, "createTable") == []
+    assert not [b for b in plan["boxes"] if b["role"] == "table"]
+    b = _rows_block(style="timeline")
+    plan = compile_slide(content_slide([b], raw=[]), layout, ASSETS, "dark")
+    assert reqs_of(plan, "createTable") == [] and plan["status"] == "native"

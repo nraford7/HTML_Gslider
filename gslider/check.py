@@ -15,6 +15,7 @@ are matched longest first, one shape (or the speaker notes) at a time, and each
 match is consumed, so a string the source has twice must be built twice; strings
 of 3 characters or fewer must match as whole words. A string found in no single
 shape is looked for across the remaining text joined (one string split over boxes).
+Native table cells count as text, one cell at a time (key `<table id>:<row>:<col>`).
 Live slides that no plan names, and planned slides missing from the deck, fail.
 A build.json whose status is not "done" fails.
 
@@ -23,11 +24,15 @@ Overflow: each plan box is re-measured with the fonts it was built with
 (h <= 1.2 line heights) whose line fills less than 90% of the wrap width:
 ink (luminance differs from the ground by > 60) in the band just below the
 box's text area, inside its x span and clear of other elements, flags it.
+Tables are read back instead: the live `tableRows[].rowHeight` total, if taller than
+planned, flags a table whose last-row text passes the floor or that runs into an
+element planned below it.
 
 Style audit: from the live deck, each text run gives a combo (font, size, colour,
 line spacing, space below); role is the objectId less `sNN_` and its trailing
 digits, ground is the ground the slide was built on. More than one combo per
 (role, ground), or a combo that differs from layouts.yaml, is a violation.
+Tables are not audited.
 """
 from __future__ import annotations
 
@@ -42,6 +47,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 from gslider import gws
+from gslider.compile import CELL_PAD
 from gslider.fonts import INSET_PT, WRAP_SLACK, line_height, measure, text_width
 from gslider.layout import Layout, load_layout
 from gslider.parse import norm
@@ -110,13 +116,29 @@ def _text_elements(elements: list[dict]):
             yield el.get("objectId", ""), el["shape"]
 
 
+def _table_cells(elements: list[dict]):
+    """("<table id>:<row>:<col>", cell) for every table cell with text, groups flattened."""
+    for el in elements or []:
+        if "elementGroup" in el:
+            yield from _table_cells(el["elementGroup"].get("children"))
+        elif "table" in el:
+            for i, row in enumerate(el["table"].get("tableRows") or []):
+                for j, cell in enumerate(row.get("tableCells") or []):
+                    loc = cell.get("location") or {}
+                    if (cell.get("text") or {}).get("textElements"):
+                        yield (f"{el.get('objectId', '')}:{loc.get('rowIndex', i)}:"
+                               f"{loc.get('columnIndex', j)}", cell)
+
+
 def slide_texts(presentation: dict) -> dict[str, dict]:
-    """slide objectId -> {"shapes": {objectId: text}, "notes": text}."""
+    """slide objectId -> {"shapes": {objectId (or table cell key): text}, "notes": text}."""
     out = {}
     for sl in presentation.get("slides") or []:
         notes = ((sl.get("slideProperties") or {}).get("notesPage") or {}).get("pageElements")
+        els = sl.get("pageElements")
         out[sl.get("objectId")] = {
-            "shapes": {oid: shape_text(sh) for oid, sh in _text_elements(sl.get("pageElements"))},
+            "shapes": {**{oid: shape_text(sh) for oid, sh in _text_elements(els)},
+                       **{key: shape_text(cell) for key, cell in _table_cells(els)}},
             "notes": "\n".join(shape_text(sh) for _, sh in _text_elements(notes)),
         }
     return out
@@ -294,16 +316,21 @@ def _pt(v) -> float:
 def obstacles(plan: dict, layout: Layout, skip: str) -> list[tuple[float, float, float, float]]:
     """(x0, y0, x1, y1) in pt of everything drawn on the slide except `skip`.
 
-    Text boxes count by their text area (insets are blank); full-page fallback
-    images are left out (the fallback slide has no boxes to scan)."""
+    Text boxes count by their text area (insets are blank), tables by their whole
+    rectangle; full-page fallback images are left out (the fallback slide has no boxes
+    to scan)."""
     boxes = {b["object_id"]: b for b in plan.get("boxes", [])}
     ins = layout.inset
     out = []
     for r in plan.get("requests", []):
         (kind, body), = r.items()
-        if kind not in ("createShape", "createLine", "createImage") or body.get("objectId") == skip:
+        if kind not in ("createShape", "createLine", "createImage", "createTable") or body.get("objectId") == skip:
             continue
         oid = body["objectId"]
+        if oid in boxes and boxes[oid]["role"] == "table":
+            b = boxes[oid]
+            out.append((b["x"], b["y"], b["x"] + b["w"], b["y"] + b["h"]))
+            continue
         if oid in boxes:
             b = boxes[oid]
             out.append((b["x"] + ins, b["y"] + ins, b["x"] + b["w"] - ins, b["y"] + ins + b["h"]))
@@ -362,6 +389,8 @@ def overflow(plans: list, layout: Layout, live: dict | None = None,
         shapes = ((live or {}).get(p["slide_id"]) or {}).get("shapes", {})
         img = None
         for box in p.get("boxes", []):
+            if box["role"] == "table":
+                continue  # read back from live row heights (table_overflow)
             oid = box["object_id"]
             text = shapes.get(oid, box["text"])
             est = estimate_h(box, text, layout, _bullet_start(p, oid))
@@ -386,6 +415,46 @@ def overflow(plans: list, layout: Layout, live: dict | None = None,
             if ink >= INK_MIN_PX:
                 flags.append((p["n"], oid, round(est, 1), round(h, 1)))
     return flags, unconfirmed
+
+
+def _dim_pt(d: dict | None) -> float:
+    d = d or {}
+    return (d.get("magnitude") or 0) * (1 if d.get("unit") == "PT" else 1 / EMU_PER_PT)
+
+
+def _live_tables(elements: list[dict]):
+    for el in elements or []:
+        if "elementGroup" in el:
+            yield from _live_tables(el["elementGroup"].get("children"))
+        elif "table" in el:
+            yield el.get("objectId"), el
+
+
+def table_overflow(plans: list, presentation: dict, layout: Layout) -> list:
+    """(n, object_id, live_h, planned_h) for tables that grew on the live slide past the floor
+    (last-row text below it) or into an element planned below the table."""
+    live = {sl.get("objectId"): dict(_live_tables(sl.get("pageElements")))
+            for sl in presentation.get("slides") or []}
+    flags = []
+    for p in plans:
+        if p.get("status") != "native":
+            continue
+        tables = live.get(p["slide_id"]) or {}
+        for box in p.get("boxes", []):
+            el = tables.get(box["object_id"]) if box["role"] == "table" else None
+            if el is None:
+                continue
+            h = sum(_dim_pt(r.get("rowHeight")) for r in el["table"].get("tableRows") or [])
+            if h <= box["h"] + EST_TOL:
+                continue
+            x0, y0, x1 = box["x"], box["y"], box["x"] + box["w"]
+            grown = y0 + h
+            past_floor = grown - CELL_PAD > layout.floor + EST_TOL
+            hits = [o for o in obstacles(p, layout, box["object_id"])
+                    if o[0] < x1 and o[2] > x0 and o[1] >= y0 + box["h"] - EST_TOL and o[1] < grown]
+            if past_floor or hits:
+                flags.append((p["n"], box["object_id"], round(h, 1), round(box["h"], 1)))
+    return flags
 
 
 # ------------------------------------------------------------------ style audit
@@ -584,6 +653,7 @@ def check(pid: str, deck: dict, plans: list, out_dir: Path, *, thumbnails: bool 
                              "their boxes were checked by estimate only")
         res.contact = contact_sheet(thumbs, out_dir / "contact.png", len(plans))
     res.overflow, res.unconfirmed = overflow(plans, layout, live, thumbs)
+    res.overflow += table_overflow(plans, presentation, layout)
 
     meta, has_meta = {}, (out_dir / "build.json").exists()
     try:

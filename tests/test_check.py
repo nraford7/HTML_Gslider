@@ -321,3 +321,97 @@ def test_thumbnails_use_two_workers(monkeypatch, tmp_path):
     monkeypatch.setattr(gws, "thumbnail", lambda pid, page, out: Image.new("RGB", (16, 9)).save(out) or str(out))
     C.fetch_thumbs("P", [(1, "a")], tmp_path)
     assert seen["n"] == 2
+
+
+# ------------------------------------------------------------------ native tables (Task 3)
+
+def _run(text, colour=None, size=11):
+    style = {"fontFamily": "Comic Sans MS", "fontSize": {"magnitude": size, "unit": "PT"}}
+    if colour:
+        style["foregroundColor"] = {"opaqueColor": {"rgbColor": colour}}
+    return {"text": {"textElements": [{"paragraphMarker": {"style": {"lineSpacing": 300}}},
+                                      {"textRun": {"content": text + "\n", "style": style}}]}}
+
+
+def _table_el(oid, cells, row_h_pt=30.0, y_pt=200.0):
+    return {"objectId": oid,
+            "size": {"width": {"magnitude": 800 * 12700, "unit": "EMU"},
+                     "height": {"magnitude": 1, "unit": "EMU"}},
+            "transform": {"scaleX": 1, "scaleY": 1, "translateX": 40 * 12700, "translateY": y_pt * 12700,
+                          "unit": "EMU"},
+            "table": {"rows": len(cells), "columns": len(cells[0]),
+                      "tableRows": [{"rowHeight": {"magnitude": row_h_pt * 12700, "unit": "EMU"},
+                                     "tableCells": [{"location": {"rowIndex": i, "columnIndex": j}, **_run(t)}
+                                                    if t else {"location": {"rowIndex": i, "columnIndex": j}}
+                                                    for j, t in enumerate(row)]}
+                                    for i, row in enumerate(cells)]}}
+
+
+def _table_plan(plans, oid, h_pt, y_pt=200.0, rows=2):
+    p = plans[0]
+    p["boxes"].append({"object_id": oid, "role": "table", "ground": "dark", "x": 40.8, "y": y_pt, "w": 878.4,
+                       "h": h_pt, "text": "", "lines": rows, "rows": rows, "cols": 2})
+    p["requests"].append({"createTable": {"objectId": oid, "rows": rows, "columns": 2, "elementProperties": {
+        "pageObjectId": p["slide_id"],
+        "size": {"width": {"magnitude": round(878.4 * 12700), "unit": "EMU"},
+                 "height": {"magnitude": round(h_pt * 12700), "unit": "EMU"}},
+        "transform": {"scaleX": 1, "scaleY": 1, "translateX": round(40.8 * 12700),
+                      "translateY": round(y_pt * 12700), "unit": "EMU"}}}})
+
+
+def test_check_coverage_reads_table_cells(deck, plans, pres, layout):
+    deck["slides"][0]["raw_text"] += ["Stage 0", "Where are we strong today?"]
+    missing, _ = C.coverage(deck, plans, pres, layout)
+    assert missing == {1: ["Stage 0", "Where are we strong today?"]}
+    pres["slides"][0]["pageElements"].append(
+        _table_el("s01_table40", [["Stage", "Question"], ["Stage 0", "Where are we strong today?"]]))
+    missing, _ = C.coverage(deck, plans, pres, layout)
+    assert missing == {}
+    texts = C.slide_texts(pres)["s01_slide"]["shapes"]
+    assert texts["s01_table40:1:1"] == "Where are we strong today?\n"
+
+
+def test_style_audit_skips_tables(deck, plans, pres, layout):
+    pres["slides"][0]["pageElements"].append(
+        _table_el("s01_table40", [["Stage", ""], ["Stage 0", "odd font"]]))
+    assert C.style_audit(pres, plans, deck, layout) == []
+
+
+def test_table_overflow_read_back(plans, pres, layout):
+    """Live row heights: a table that grew past the floor (or into the next box) is flagged."""
+    _table_plan(plans, "s01_table40", 60.0, y_pt=420.0)
+    pres["slides"][0]["pageElements"].append(_table_el("s01_table40", [["a", "b"], ["c", "d"]], 30.0, 420.0))
+    assert C.table_overflow(plans, pres, layout) == []
+    el = pres["slides"][0]["pageElements"][-1]
+    el["table"]["tableRows"][1]["rowHeight"]["magnitude"] = 80 * 12700  # 420 + 110 > floor 495
+    assert C.table_overflow(plans, pres, layout) == [(1, "s01_table40", 110.0, 60.0)]
+
+
+def test_table_overflow_into_next_box(plans, pres, layout):
+    p = plans[0]
+    top = min(b["y"] for b in p["boxes"] if b["y"] > 150)  # a text box well above the floor
+    _table_plan(plans, "s01_table40", 20.0, y_pt=top - 40)
+    pres["slides"][0]["pageElements"].append(_table_el("s01_table40", [["a", "b"], ["c", "d"]], 10.0, top - 40))
+    assert C.table_overflow(plans, pres, layout) == []
+    pres["slides"][0]["pageElements"][-1]["table"]["tableRows"][1]["rowHeight"]["magnitude"] = 60 * 12700
+    flags = C.table_overflow(plans, pres, layout)
+    assert [(n, oid) for n, oid, *_ in flags] == [(1, "s01_table40")]
+    assert top - 40 + 70 < layout.floor  # flagged for the overlap, not the floor
+
+
+@pytestmark_fonts
+def test_overflow_skips_table_boxes(plans, layout, tmp_path):
+    _table_plan(plans, "s01_table40", 60.0)
+    flags, unconfirmed = C.overflow(plans, layout, None, {1: _thumb(tmp_path)})
+    assert flags == [] and not [u for u in unconfirmed if u[1] == "s01_table40"]
+    # a table counts as an obstacle by its full rectangle
+    obs = C.obstacles(plans[0], layout, "nothing")
+    assert (40.8, 200.0, round(40.8 + 878.4, 1), 260.0) in [tuple(round(v, 1) for v in o) for o in obs]
+
+
+def test_check_flags_grown_table(deck, plans, pres, tmp_path, monkeypatch):
+    _table_plan(plans, "s01_table40", 60.0, y_pt=420.0)
+    pres["slides"][0]["pageElements"].append(_table_el("s01_table40", [["a", "b"], ["c", "d"]], 60.0, 420.0))
+    _mock_get(monkeypatch, pres)
+    res = C.check(PID, deck, plans, tmp_path, thumbnails=False, layout=load_layout())
+    assert not res.ok and [oid for _, oid, *_ in res.overflow] == ["s01_table40"]
