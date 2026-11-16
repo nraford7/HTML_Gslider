@@ -1,0 +1,39 @@
+<!doctype html><html><head><title>HTML style fixture</title>
+<style>
+  :root{--W:1920px;--H:1080px;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html,body{background:#2a2a2a;}
+  .slide-wrap{width:var(--W);height:var(--H);margin:28px auto;zoom:var(--fit,1);position:relative;}
+  .slide{width:var(--W);height:var(--H);overflow:hidden;position:relative;background:#F4F0E7;color:#1A1917;}
+  .rule{position:absolute;left:120px;top:250px;width:600px;height:6px;background:#B5452B;}
+  h1.title{position:absolute;left:120px;top:100px;font-family:Georgia,serif;font-size:80px;line-height:1.2;font-weight:400;}
+  p.body{position:absolute;left:120px;top:300px;width:900px;font-family:Helvetica,Arial,sans-serif;font-size:32px;line-height:48px;}
+  p.body b{color:#B5452B;}
+  .vlabel{position:absolute;left:1700px;top:500px;font-family:Helvetica,Arial,sans-serif;font-size:40px;transform:rotate(-90deg);}
+  h2.grad{position:absolute;left:120px;top:480px;font-family:Georgia,serif;font-size:72px;font-weight:700;
+    background:linear-gradient(90deg,#C0392B,#2C3E50);-webkit-background-clip:text;background-clip:text;
+    color:transparent;-webkit-text-fill-color:transparent;}
+  table.tbl{position:absolute;left:120px;top:680px;width:1200px;border-collapse:collapse;
+    font-family:Helvetica,Arial,sans-serif;font-size:28px;}
+  .tbl th{text-align:left;text-transform:uppercase;font-size:22px;letter-spacing:2px;border-bottom:2px solid #1A1917;padding:8px;}
+  .tbl td{padding:8px;border-bottom:1px solid #CCC;}
+  @media print{
+    html,body{background:#fff;}
+    @page{size:1920px 1080px;margin:0;}
+    .slide-wrap{zoom:1 !important;margin:0 !important;width:1920px !important;height:1080px !important;}
+  }
+</style></head><body>
+<div class="slide-wrap" data-slide-id="one"><div class="slide">
+  <h1 class="title">Plain heading</h1>
+  <div class="rule"></div>
+  <p class="body">A paragraph with <b>bold words</b> inside it, long enough to wrap onto a second line in this box.</p>
+  <div class="vlabel">ROTATED LABEL</div>
+  <h2 class="grad">Gradient heading</h2>
+  <table class="tbl"><thead><tr><th style="width:30%">Stage</th><th>What happens</th></tr></thead>
+    <tbody><tr><td>Northwind</td><td>A short review.</td></tr><tr><td>ACME</td><td>A strategy report.</td></tr></tbody></table>
+</div></div>
+<script>
+function fit(){var s=Math.min(1,(window.innerWidth-56)/1920);document.documentElement.style.setProperty('--fit',s);}
+fit(); addEventListener('resize',fit);
+</script>
+</body></html>
