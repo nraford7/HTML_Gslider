@@ -183,16 +183,24 @@ def guard_into(pid: str) -> None:
 
 # --------------------------------------------------------------------- assets
 
-def check_slide_parity(html: str) -> None:
+def check_slide_parity(html_path: Path) -> None:
     """Refuse a deck whose `.slide-wrap` list differs between html.parser (parse, wrap_indexes)
-    and html5lib (what Chrome is given): slide n would be measured or rendered from another slide."""
+    and the page Chrome is given (html5lib on `sanitize.safe_deck`): slide n would be measured
+    or rendered from another slide. A deck the sanitiser refuses is refused here, once.
+    Images are not read (same structure, no network)."""
     def ids(soup):
         return [w.get("data-slide-id") for w in soup.select(".slide-wrap")]
 
-    if ids(BeautifulSoup(html, "html.parser")) != ids(sanitize.parse(html)):
+    html_path = Path(html_path)
+    html = html_path.read_text(encoding="utf-8")
+    try:
+        safe = sanitize.safe_html(html, html_path.resolve().parent, images=False)
+    except sanitize.UnsafePage as e:
+        raise BuildError(f"{html_path.name}: {e}") from e
+    if ids(BeautifulSoup(html, "html.parser")) != ids(sanitize.parse(safe)):
         raise BuildError("the deck's slides are read differently by the two HTML parsers gslider uses "
-                         "(an odd comment such as <!--> or <!--->, or a slide inside <textarea>, <select> "
-                         "or <title>); fix that markup and build again")
+                         "(an odd comment such as <!--> or <!--->, or a slide inside <textarea>, <select>, "
+                         "<title> or <object>); fix that markup and build again")
 
 
 def wrap_indexes(html: str, include_internal: bool) -> dict[int, int]:
@@ -605,6 +613,7 @@ def build(html_path, title: str, ivory=frozenset(), include_internal: bool = Fal
     html_path = Path(html_path)
     if style not in STYLES:
         raise BuildError(f"unknown style {style!r}; use one of {', '.join(STYLES)}")
+    check_slide_parity(html_path)  # before any network call
     if into:
         guard_into(into)
     src = into or base_id()
@@ -613,7 +622,6 @@ def build(html_path, title: str, ivory=frozenset(), include_internal: bool = Fal
     _check_page_size(src)  # a stale or wrong base is found before minutes of rendering
 
     html = html_path.read_text(encoding="utf-8")
-    check_slide_parity(html)
     slug = slugify(html_path.stem)
     out_dir = Path(out_dir) if out_dir else OUT / slug
     ivory = set(ivory)

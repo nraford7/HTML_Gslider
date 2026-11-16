@@ -29,9 +29,15 @@ What it does:
   hide a `url(`.
 - The deck is parsed with html5lib (a WHATWG HTML5 parser, much closer to Chrome than
   html.parser), so `<!-->` and similar cannot hide markup. Comments, CDATA, processing
-  instructions, every `<meta http-equiv>` and the MathML `mglyph` / `malignmark` are removed,
-  and every `<` in style text becomes the CSS escape `\\3c ` (bs4 writes style text raw,
-  and inside SVG or MathML a `<` there would be read back as a tag).
+  instructions, every `<meta http-equiv>`, the MathML `mglyph` / `malignmark`, and `noscript`,
+  `noframes`, `fencedframe` (Chrome runs with scripts on, so it never shows noscript) are
+  removed. `xmp` and `plaintext` become `pre` (their raw text cannot round-trip).
+- Style text: bs4 writes it raw, and inside SVG or MathML a `<` there would be read back as
+  a tag. So a `<` that could open a tag (before a letter, `/`, `!` or `?`) becomes the CSS
+  escape `\\3c ` inside a string or url(), and `< ` (a space added, same CSS) elsewhere, as
+  in `1px< width`. The CSS-ignored `<!--` marker is removed.
+- html5lib drops the first newline after `<pre>`, `<textarea>` and `<listing>`; it is written
+  back so the text Chrome shows does not change.
 - Parse and serialise is not always a fixed point, so the output is parsed and sanitised
   again until it no longer changes (UnsafePage after MAX_ROUNDS).
 
@@ -70,7 +76,18 @@ MAX_IMPORT_DEPTH = 4
 MAX_ROUNDS = 4
 
 _DROP_TAGS = ("script", "iframe", "frame", "frameset", "object", "embed", "portal", "applet", "base", "noembed",
-              "mglyph", "malignmark")
+              "mglyph", "malignmark", "noscript", "noframes", "fencedframe")
+_PRE_TAGS = ("pre", "textarea", "listing")
+# a CSS string or url(...) token (where `<` is escaped), else a `<` that could open a tag
+_STYLE_LT = re.compile(r"""("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|url\([^)]*\))|<(?=[A-Za-z/!?])""", re.I | re.S)
+
+
+def _style_text(css: str) -> str:
+    """css with no `<` that could open a tag (see the module notes)."""
+    css = css.replace("<!--", "")
+    return _STYLE_LT.sub(lambda m: m.group(1).replace("<", "\\3c ") if m.group(1) else "< ", css)
+
+
 _URL_ATTRS = ("src", "srcset", "href", "xlink:href", "poster", "data", "background", "lowsrc", "dynsrc",
               "action", "formaction", "manifest", "codebase", "longdesc", "ping", "imagesrcset", "srcdoc",
               "archive", "classid", "profile", "cite", "icon", "attributionsrc")
@@ -93,8 +110,9 @@ _IMAGE_SET_ITEM = re.compile(r"url\([^)]*\)|(['\"])(.*?)\1", re.I | re.S)
 class _Ctx:
     """One sanitise run: base folder, refusals, and a cache of resolved sources."""
 
-    def __init__(self, base_dir: Path, refused: list | None):
+    def __init__(self, base_dir: Path, refused: list | None, images: bool = True):
         self.base = Path(base_dir)
+        self.images = images
         self.refused = refused if refused is not None else []
         self.cache: dict[tuple[str, str], str | None] = {}
 
@@ -107,6 +125,8 @@ class _Ctx:
         src = (src or "").strip()
         if src.lower().startswith("data:image/"):
             return src
+        if not self.images:
+            return None
         key = ("img", src)
         if key not in self.cache:
             try:
@@ -275,13 +295,16 @@ def _srcset(value: str, ctx: _Ctx) -> str:
     return ", ".join(out)
 
 
-def parse(html: str) -> BeautifulSoup:
-    """html5lib parse (see the module notes); use it for every page Chrome will open."""
-    return BeautifulSoup(html, "html5lib")
-
-
 class UnsafePage(ValueError):
     """A page that still holds a redirect or a foreign script after sanitising."""
+
+
+def parse(html: str) -> BeautifulSoup:
+    """html5lib parse (see the module notes); use it for every page Chrome will open."""
+    try:
+        return BeautifulSoup(html, "html5lib")
+    except AssertionError as e:  # html5lib asserts on some malformed nesting
+        raise UnsafePage(f"the HTML parser failed on the deck: {e}") from e
 
 
 def _lock_down(soup: BeautifulSoup, script_nonce: str | None) -> None:
@@ -318,6 +341,13 @@ def _sanitize_soup(soup: BeautifulSoup, ctx: _Ctx) -> None:
         node.extract()
     for tag in soup.find_all(_DROP_TAGS):
         tag.decompose()
+    for tag in soup.find_all(["xmp", "plaintext"]):
+        tag.name = "pre"
+        tag.string = tag.get_text()
+    for tag in soup.find_all(_PRE_TAGS):
+        first = tag.contents[0] if tag.contents else None
+        if isinstance(first, str) and first.startswith("\n"):
+            first.replace_with("\n" + first)
     for tag in soup.find_all("meta"):
         if any(a.lower() == "http-equiv" for a in tag.attrs):
             tag.decompose()
@@ -345,7 +375,8 @@ def _sanitize_soup(soup: BeautifulSoup, ctx: _Ctx) -> None:
         link.decompose()
 
     for style in soup.find_all("style"):
-        style.string = _css("".join(str(c) for c in style.contents), ctx).replace("<", "\\3c ")
+        style.string = _css("".join(str(c) for c in style.contents), ctx)
+        style.string = _style_text(style.string)
 
     for tag in soup.find_all(True):
         name = tag.name.lower()
@@ -395,10 +426,11 @@ def _sanitize_soup(soup: BeautifulSoup, ctx: _Ctx) -> None:
                 del tag[attr]
 
 
-def safe_html(html: str, base_dir: Path, refused: list | None = None) -> str:
+def safe_html(html: str, base_dir: Path, refused: list | None = None, images: bool = True) -> str:
     """The deck with everything Chrome could load from outside base_dir removed or inlined.
-    Refused sources are appended to `refused` as {"src", "reason"} (each once)."""
-    ctx = _Ctx(Path(base_dir), refused)
+    Refused sources are appended to `refused` as {"src", "reason"} (each once).
+    images=False blanks every image without reading it (same page structure, no network)."""
+    ctx = _Ctx(Path(base_dir), refused, images)
     for _ in range(MAX_ROUNDS):
         soup = parse(html)
         _sanitize_soup(soup, ctx)

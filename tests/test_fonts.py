@@ -221,3 +221,4 @@ def test_download_has_time_and_size_limits(monkeypatch, tmp_path):
     fonts._download("https://fonts.gstatic.com/x.ttf", tmp_path / "x.part")
     cmd = seen[0]
     assert cmd[cmd.index("--max-time") + 1] == "60" and cmd[cmd.index("--max-filesize") + 1] == "20M"
+    assert cmd[cmd.index("--proto") + 1] == "=https" and cmd[cmd.index("--proto-redir") + 1] == "=https"

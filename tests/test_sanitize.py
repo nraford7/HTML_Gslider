@@ -378,10 +378,81 @@ def test_output_reparses_to_nothing_live(folder, tmp_path, trick):
     assert _clean(out, folder) == out  # a fixed point
 
 
-def test_style_text_never_holds_a_less_than(folder):
-    out = _clean("<svg><style>&lt;/style&gt;&lt;b&gt;</style></svg><style>p::after{content:'<'}</style>", folder)
+def test_style_text_never_holds_a_tag_start(folder):
+    out = _clean("<svg><style>&lt;/style&gt;&lt;b&gt;</style></svg><style>p::after{content:'<i>'}</style>", folder)
     bodies = re.findall(r"<style[^>]*>(.*?)</style", out, re.S | re.I)
-    assert bodies and all("<" not in b for b in bodies)
+    assert bodies and not any(re.search(r"<[A-Za-z/!?]", b) for b in bodies)
+
+
+def test_style_keeps_media_ranges_and_cdo(folder):
+    out = _clean("<style><!-- p{color:red} --> @media (width < 600px){a{b:c}} @media (1px<width<=2px){d{e:f}}"
+                 "</style>", folder)
+    assert "p{color:red}" in out and "(width < 600px)" in out and "(1px< width<=2px)" in out
+    assert "<!--" not in out
+
+
+def test_style_strings_and_urls_escape_less_than(folder):
+    out = _clean("<style>p::after{content:'<b>'} a{background:url(data:image/svg+xml,<svg/>)}</style>", folder)
+    assert "content:'\\3c b>'" in out and 'url("data:image/svg+xml,\\3c svg/>")' in out
+
+
+def test_images_false_reads_nothing(folder, monkeypatch):
+    monkeypatch.setattr(sanitize.fetch, "resolve_image", lambda *a: pytest.fail("read an image"))
+    out = sanitize.safe_html("<img src='img/ok.png'><p style='background:url(img/ok.png)'>", folder, images=False)
+    assert "ok.png" not in out
+
+
+_BENIGN = (
+    "<pre>\n\n\n\n\n\ncode</pre>",
+    "<pre>\n\nline</pre>",
+    "<textarea>\n\nx</textarea>",
+    "<listing>\n\nx</listing>",
+    "<xmp>if (a < b && c > d) { x &= y; }</xmp>",
+    "<plaintext>a < b & c",
+    "<noframes>a&b</noframes>",
+    "<p>a<p>b</p></p><table><tr><td>x</td></tr></table>&nbsp;<br/><svg><rect/></svg>",
+    "<template><p>t</p></template><noscript><p>n</p></noscript>",
+)
+
+
+@pytest.mark.parametrize("deck", _BENIGN)
+def test_benign_decks_settle(folder, deck):
+    out = _clean(f"<div class='slide-wrap'>{deck}</div>", folder)
+    assert _clean(out, folder) == out
+
+
+def test_pre_keeps_its_blank_first_line(folder):
+    out = _clean("<pre>\n\nline</pre>", folder)
+    assert sanitize.parse(out).pre.get_text() == "\nline"  # what Chrome shows for the original
+
+
+def test_xmp_text_kept_as_pre(folder):
+    out = _clean("<xmp>a < b</xmp>", folder)
+    assert sanitize.parse(out).pre.get_text() == "a < b"
+
+
+def test_parser_crash_is_unsafe_page(folder, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("resetInsertionMode")
+
+    monkeypatch.setattr(sanitize, "BeautifulSoup", boom)
+    with pytest.raises(sanitize.UnsafePage):
+        sanitize.parse("<p>")
+
+
+def test_safe_html_raises_when_it_cannot_settle(folder, monkeypatch):
+    calls = iter(range(100))
+    monkeypatch.setattr(sanitize, "_sanitize_soup", lambda soup, ctx: soup.append(str(next(calls))))
+    with pytest.raises(sanitize.UnsafePage):
+        _clean("<p>x</p>", folder)
+
+
+def test_page_refuses_csp_outside_head():
+    soup = sanitize.parse("<html><head></head><body></body></html>")
+    soup.head.decompose()
+    soup.html.insert(0, soup.new_tag("body"))
+    text = sanitize.page(soup)  # lock_down adds a head when there is none
+    assert sanitize.parse(text).head.find(True)["http-equiv"] == "Content-Security-Policy"
 
 
 def test_every_meta_http_equiv_removed(folder):
@@ -404,7 +475,10 @@ def test_page_refuses_a_live_redirect_or_foreign_script():
 
 
 @needs_chrome
-@pytest.mark.parametrize("trick", _MUTATIONS[:2])
+@pytest.mark.parametrize("trick", [*_MUTATIONS[:2],
+                                   "<noscript><style></noscript><meta http-equiv=refresh content='0;url={t}'>",
+                                   "<math><mtext><style>&lt;/style&gt;<meta http-equiv=refresh content='0;url={t}'>"
+                                   "</style></mtext></math>"])
 def test_mutation_redirect_absent_from_plate_and_render(folder, tmp_path, monkeypatch, trick):
     t = (tmp_path / "secret" / "t.html").as_uri()
     page = _red_text_page(folder, tmp_path, trick.format(t=t))
@@ -435,3 +509,16 @@ def test_csp_keeps_good_content(folder, tmp_path):
     assert _area(img, (120, 420, 280, 580)) == {BLUE}
     assert _area(img, (420, 420, 580, 580)) == {BLUE}
     assert _area(img, (720, 420, 880, 580)) == {GREEN}
+
+
+@needs_chrome
+def test_media_range_still_applies(folder, tmp_path):
+    page = folder / "deck.html"
+    page.write_text("""<!doctype html><html><head><style>*{margin:0}
+.slide-wrap{width:1920px;height:1080px;position:relative;background:#fff}
+.box{position:absolute;left:100px;top:400px;width:200px;height:200px;background:#0000ff}
+@media (width < 9999px){.box{background:#00ff00}}</style></head><body>
+<div class="slide-wrap"><p style="position:absolute;left:100px;top:100px;font:40px Georgia">Text</p>
+<div class="box"></div></div></body></html>""")
+    m = measure.measure_slide(page, 1, tmp_path / "m")
+    assert _area(Image.open(m["plate"]).convert("RGB"), (120, 420, 280, 580)) == {GREEN}

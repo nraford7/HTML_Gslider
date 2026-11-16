@@ -57,7 +57,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFilter
 
-from gslider import assets, gws
+from gslider import assets, build, gws
 from gslider.compile import CELL_PAD
 from gslider.fonts import INSET_PT, WRAP_SLACK, line_height, measure, text_width
 from gslider.layout import Layout, load_layout
@@ -673,6 +673,11 @@ def render_html_slides(deck: dict, plans: list, out_dir: Path, notes: list) -> d
     if src is None or not assets.CHROME:
         notes.append("image difference not measured: " + ("source HTML not found" if src is None
                                                           else "Chrome not found"))
+        return {}
+    try:
+        build.check_slide_parity(src)
+    except build.BuildError as e:
+        notes.append(f"image difference not measured: {e}")
         return {}
     index = {s["n"]: s.get("html_index") or s["n"] for s in deck.get("slides", [])}
     rdir = out_dir / "renders"

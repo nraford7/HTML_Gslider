@@ -1251,9 +1251,34 @@ def test_build_records_shares_from_parallel_publishing(google, monkeypatch, tmp_
     assert meta["images_not_loaded"] == [{"src": "../secret.png", "reason": "outside the HTML file's folder"}]
 
 
-def test_build_refuses_a_deck_the_parsers_split_differently(tmp_path, monkeypatch):
+@pytest.mark.parametrize("html", [
+    '<!--><div class="slide-wrap">A</div>--><div class="slide-wrap">B</div>',
+    '<div class="slide-wrap" data-slide-id="a">A</div><object><div class="slide-wrap" data-slide-id="b">B</div>'
+    '</object><div class="slide-wrap" data-slide-id="c">C</div>',
+])
+def test_build_refuses_a_deck_the_parsers_split_differently(tmp_path, html):
+    page = tmp_path / "d.html"
+    page.write_text(html)
+    with pytest.raises(build.BuildError, match="read differently"):
+        build.check_slide_parity(page)
+    page.write_text('<!-- x --><div class="slide-wrap">A</div><div class="slide-wrap">B</div>')
+    build.check_slide_parity(page)
+
+
+def test_build_checks_parity_before_any_network_call(tmp_path, monkeypatch):
     page = tmp_path / "d.html"
     page.write_text('<!--><div class="slide-wrap">A</div>--><div class="slide-wrap">B</div>')
+    monkeypatch.setattr(build, "guard_into", lambda *a: pytest.fail("network before parity"))
+    monkeypatch.setattr(build, "_check_page_size", lambda *a: pytest.fail("network before parity"))
+    monkeypatch.setattr(build, "base_id", lambda: "base")
     with pytest.raises(build.BuildError, match="read differently"):
-        build.check_slide_parity(page.read_text())
-    build.check_slide_parity('<!-- x --><div class="slide-wrap">A</div><div class="slide-wrap">B</div>')
+        build.build(page, "t", into="x", out_dir=tmp_path / "o")
+
+
+def test_build_reports_a_deck_that_cannot_be_sanitised(tmp_path, monkeypatch):
+    page = tmp_path / "d.html"
+    page.write_text('<div class="slide-wrap">A</div>')
+    monkeypatch.setattr(build.sanitize, "safe_html",
+                        lambda *a, **k: (_ for _ in ()).throw(build.sanitize.UnsafePage("does not settle")))
+    with pytest.raises(build.BuildError, match="does not settle"):
+        build.check_slide_parity(page)
