@@ -65,3 +65,132 @@ def test_wrap_slack_matches_live_slides_wrap():
     t = ("Northwind's commercial leadership and ACME's strategy and editorial leads agree the ambition, "
          "the goal for five to ten years, the risk the owners will take and the relationship priorities.")
     assert measure(t, "Libre Franklin", 14, 415, 115)[0] == 4
+
+
+# --- any Google Fonts family -------------------------------------------------
+
+import json  # noqa: E402
+
+import gslider.fonts as fonts  # noqa: E402
+
+INTER_CSS = """@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  src: url(https://fonts.gstatic.com/s/inter/v20/abc400.ttf) format('truetype');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 700;
+  src: url(https://fonts.gstatic.com/s/inter/v20/abc700.ttf) format('truetype');
+}
+"""
+
+
+def _fake_fetch(responses, calls):
+    def fetch(url):
+        calls.append(url)
+        for name, resp in responses.items():
+            if f"family={name}" in url:
+                return resp
+        return 400, "Missing font family"
+    return fetch
+
+
+def test_css_api_ttf_url_parsed():
+    assert fonts.ttf_url_from_css(INTER_CSS) == "https://fonts.gstatic.com/s/inter/v20/abc400.ttf"
+    assert fonts.ttf_url_from_css(INTER_CSS, weight=700).endswith("abc700.ttf")
+    one = "@font-face { font-weight: 400; src: url(https://x.test/a.ttf) format('truetype'); }"
+    assert fonts.ttf_url_from_css(one, weight=700) == "https://x.test/a.ttf"  # nearest weight
+    assert fonts.ttf_url_from_css("<html>error</html>") is None
+
+
+def test_css_url_built_with_weights():
+    assert fonts.css_url("Playfair Display") == (
+        "https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700"
+    )
+
+
+def test_unknown_family_unavailable(font_cache, monkeypatch):
+    calls = []
+    monkeypatch.setattr(fonts, "_fetch_css", _fake_fetch({}, calls))
+    assert fonts.google_font_available("Comic Sans") is False
+    n = len(calls)
+    assert n >= 1
+    assert json.loads((font_cache / "fonts.json").read_text())["Comic Sans"] is False
+    assert fonts.google_font_available("Comic Sans") is False
+    assert len(calls) == n  # second answer came from the cache
+    with pytest.raises(fonts.FontUnavailable):
+        fonts.font_path("Comic Sans")
+    assert issubclass(fonts.FontUnavailable, ValueError)
+    assert fonts.normal_line_ratio("Comic Sans") is None
+
+
+def test_known_family_available_and_cached(font_cache, monkeypatch):
+    calls = []
+    monkeypatch.setattr(fonts, "_fetch_css", _fake_fetch({"Inter": (200, INTER_CSS)}, calls))
+    assert fonts.google_font_available("Inter") is True
+    assert fonts.google_font_available("Inter") is True
+    assert len(calls) == 1
+    assert json.loads((font_cache / "fonts.json").read_text()) == {"Inter": True}
+
+
+def test_network_error_not_cached(font_cache, monkeypatch):
+    def boom(url):
+        raise OSError("no network")
+    monkeypatch.setattr(fonts, "_fetch_css", boom)
+    assert fonts.google_font_available("Inter") is False
+    assert not (font_cache / "fonts.json").exists()
+
+
+def test_pinned_families_skip_css_api(font_cache, monkeypatch):
+    def boom(url):
+        raise AssertionError("CSS API must not be called for pinned families")
+    monkeypatch.setattr(fonts, "_fetch_css", boom)
+    assert fonts.google_font_available("Playfair Display") is True
+    assert fonts.google_font_available("Libre Franklin") is True
+
+
+def test_font_path_downloads_css_ttf(font_cache, monkeypatch):
+    calls, got = [], []
+    monkeypatch.setattr(fonts, "_fetch_css", _fake_fetch({"Inter": (200, INTER_CSS)}, calls))
+
+    def fake_download(url, dest):
+        got.append(url)
+        dest.write_bytes(b"\0" * 20_000)
+    monkeypatch.setattr(fonts, "_download", fake_download)
+    p = fonts.font_path("Inter")
+    assert p == font_cache / "Inter.ttf" and p.exists()
+    assert got == ["https://fonts.gstatic.com/s/inter/v20/abc400.ttf"]
+    fonts.font_path("Inter")
+    assert len(got) == 1  # cached on disk
+
+
+def test_slides_family_substitution(font_cache, monkeypatch):
+    calls = []
+    monkeypatch.setattr(fonts, "_fetch_css", _fake_fetch({"Inter": (200, INTER_CSS)}, calls))
+    assert fonts.slides_family("Helvetica Neue", "sans-serif") == ("Arial", True)
+    assert fonts.slides_family("Inter", "sans-serif") == ("Inter", False)
+    assert fonts.slides_family('"Inter"', "sans-serif") == ("Inter", False)
+    assert fonts.slides_family("Baskerville", "serif") == ("Georgia", True)
+    assert fonts.slides_family("Menlo", "monospace") == ("Courier New", True)
+    assert fonts.slides_family("Weird", "") == ("Arial", True)
+    assert fonts.slides_family("serif", "serif") == ("Georgia", False)  # generic, not a substitution
+
+
+@pytest.mark.usefixtures("fonts_ready")
+def test_existing_families_unchanged():
+    assert fonts.normal_line_ratio("Playfair Display") == pytest.approx(1.333, abs=0.001)
+    assert fonts.normal_line_ratio("Libre Franklin") == pytest.approx(1.212, abs=0.001)
+    assert fonts.font_path("Playfair Display").name == "PlayfairDisplay.ttf"
+    assert fonts.font_path("Libre Franklin").name == "LibreFranklin.ttf"
+
+
+@pytest.mark.network
+def test_live_css_api(font_cache, online):
+    assert fonts.google_font_available("Inter") is True
+    assert fonts.google_font_available("Comic Sans") is False
+    ratio = fonts.normal_line_ratio("Inter")
+    assert ratio is not None and 1.0 < ratio < 1.6
+    assert fonts.text_width("Hello", "Inter", 14) > 0
