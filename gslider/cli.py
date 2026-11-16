@@ -47,9 +47,12 @@ def _parser() -> argparse.ArgumentParser:
     b = sub.add_parser("build", help="create a new Google Slides deck from an HTML deck")
     b.add_argument("html", type=Path)
     b.add_argument("--title", help="deck title in Drive (default: HTML <title> or file name)")
+    b.add_argument("--style", choices=B.STYLES, default="html",
+                   help="html (default): keep the HTML's own look, text editable over a picture of "
+                        "everything else; template: the fixed gslider design from layouts.yaml")
     b.add_argument("--ivory", type=_ivory, default=set(), metavar="N,N",
-                   help="force these slides to the ivory ground; 1-based positions in the built deck, "
-                        "counted after internal slides are skipped (e.g. 3,4,14)")
+                   help="template style: force these slides to the ivory ground; 1-based positions in the "
+                        "built deck, counted after internal slides are skipped (e.g. 3,4,14)")
     b.add_argument("--include-internal", action="store_true", help="keep internal slides (version-note)")
     b.add_argument("--into", metavar="PRESENTATION_ID",
                    help="rebuild into an existing gslider deck (all its slides are replaced); refused if the "
@@ -78,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.cmd == "build":
             title = args.title or _html_title(args.html) or args.html.stem
             res = B.build(args.html, title, ivory=args.ivory, include_internal=args.include_internal,
-                          into=args.into, out_dir=args.out)
+                          into=args.into, out_dir=args.out, style=args.style)
             fb = [p["n"] for p in res.plans if p["status"] == "fallback"]
             print(f"{res.url}\n{len(res.plans)} slides, {len(res.plans) - len(fb)} native"
                   + (f", fallback: {', '.join(map(str, fb))}" if fb else "") + f"\noutput: {res.out_dir}")

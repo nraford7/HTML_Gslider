@@ -33,6 +33,17 @@ line spacing, space below); role is the objectId less `sNN_` and its trailing
 digits, ground is the ground the slide was built on. More than one combo per
 (role, ground), or a combo that differs from layouts.yaml, is a violation.
 Tables are not audited.
+
+html style (plans with style "html"): coverage ignores case (text-transform is applied
+to the built text) and the slide's `dropped_text` is the text left in the plate. The
+style audit is skipped (there are no roles). Overflow: every box goes to the
+thumbnail, and the band below it is compared with the plate PNG at the same place
+(ink = a thumbnail pixel outside the plate's local 3x3 luminance range by more than
+INK_DELTA), so the plate's own rules and shapes are not ink. Information only (not
+pass/fail): font substitutions, dropped letter-spacing, text left in the plate,
+position read-back (live element x/y from `get` against the plan, POS_TOL pt), and a
+per-slide image difference between the Slides thumbnail and a Chrome render of the
+HTML slide (mean absolute difference, 400x225 greyscale) with `compare.png` beside it.
 """
 from __future__ import annotations
 
@@ -44,9 +55,9 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
-from gslider import gws
+from gslider import assets, gws
 from gslider.compile import CELL_PAD
 from gslider.fonts import INSET_PT, WRAP_SLACK, line_height, measure, text_width
 from gslider.layout import Layout, load_layout
@@ -62,6 +73,7 @@ BAND_PAD = 2.0       # pt between the text-area bottom and the scan band
 THUMB = (400, 225)
 PER_ROW = 4
 GUTTER = 8
+POS_TOL = 4.0        # pt: html-style boxes whose live x/y moved more than this are listed
 
 
 @dataclass
@@ -78,6 +90,10 @@ class CheckResult:
     extra_slides: list = field(default_factory=list)        # live slide ids no plan names
     missing_slides: list = field(default_factory=list)      # planned slide ids not in the deck
     build_status: str | None = None                         # build.json status (None: no build.json)
+    style: str = "template"                                 # "html" when the plans are html style
+    positions: dict = field(default_factory=dict)           # n -> {boxes, max_dx, max_dy, off, missing}
+    image_diff: dict = field(default_factory=dict)          # n -> mean abs difference (0-255)
+    compare: Path | None = None                             # thumbnail | Chrome render, per slide
 
 
 def _log(msg: str) -> None:
@@ -209,23 +225,29 @@ def dropped_strings(deck: dict, layout: Layout, notes: list | None = None) -> di
 
 
 def coverage(deck: dict, plans: list, presentation: dict, layout: Layout,
-             notes: list | None = None) -> tuple[dict[int, list[str]], dict[int, list[str]]]:
-    """(missing, dropped): n -> strings absent from the built slide; n -> strings not required."""
+             notes: list | None = None, fold: bool = False) -> tuple[dict[int, list[str]], dict[int, list[str]]]:
+    """(missing, dropped): n -> strings absent from the built slide; n -> strings not required.
+    fold: compare case-insensitively (html style applies CSS text-transform)."""
     texts = slide_texts(presentation)
     slide_id = {p["n"]: p["slide_id"] for p in plans}
     dropped = dropped_strings(deck, layout, notes)
+    f = (lambda t: norm(t).casefold()) if fold else norm
     missing = {}
     for s in deck.get("slides", []):
         n = s["n"]
         built = texts.get(slide_id.get(n, f"s{n:02d}_slide"))
-        need = Counter(norm(t) for t in s.get("raw_text") or [] if norm(t))
-        need -= Counter(dropped.get(n, []))
+        original = {}
+        for t in s.get("raw_text") or []:
+            if norm(t):
+                original.setdefault(f(t), norm(t))
+        need = Counter(f(t) for t in s.get("raw_text") or [] if norm(t))
+        need -= Counter(f(t) for t in dropped.get(n, []))
         if built is None:
             miss = list(need.elements())
         else:
-            miss = _match_all(list(need.elements()), [*built["shapes"].values(), built["notes"]])
+            miss = _match_all(list(need.elements()), [f(x) for x in (*built["shapes"].values(), built["notes"])])
         if miss:
-            missing[n] = miss
+            missing[n] = [original.get(t, t) for t in miss]
     return missing, dropped
 
 
@@ -327,6 +349,8 @@ def obstacles(plan: dict, layout: Layout, skip: str) -> list[tuple[float, float,
         if kind not in ("createShape", "createLine", "createImage", "createTable") or body.get("objectId") == skip:
             continue
         oid = body["objectId"]
+        if oid.endswith("_plate"):
+            continue  # html style: the full-page plate is compared against, not avoided
         if oid in boxes and boxes[oid]["role"] == "table":
             b = boxes[oid]
             out.append((b["x"], b["y"], b["x"] + b["w"], b["y"] + b["h"]))
@@ -351,7 +375,7 @@ def scan_band(box: dict, plan: dict, layout: Layout) -> tuple[float, float, floa
     """The clear strip (x0, y0, x1, y1) pt just below the box's text area, or None."""
     ins = layout.inset
     st = layout.styles.get(box["role"], {}).get(box.get("ground", "dark"))
-    depth = line_height(st["font"], st["size"], st["line_spacing"]) if st else 14.0
+    depth = box.get("line_pt") or (line_height(st["font"], st["size"], st["line_spacing"]) if st else 14.0)
     x0, x1 = box["x"] + ins, box["x"] + box["w"] - ins
     y0 = box["y"] + ins + box["h"] + BAND_PAD
     y1 = min(y0 + depth, layout.page["h"])
@@ -379,12 +403,51 @@ def ink_below(thumb: Image.Image, band: tuple, ground_hex: str, page_w: float) -
     return sum(1 for px in region.getdata() if abs(_lum(px) - g) > INK_DELTA)
 
 
+def _lum_image(img: Image.Image) -> Image.Image:
+    return img.convert("RGB").convert("L", (0.299, 0.587, 0.114, 0))
+
+
+def ink_vs_plate(thumb: Image.Image, plate: Image.Image, band: tuple, page_w: float) -> int:
+    """Pixels in band (pt) whose luminance lies outside the plate's 3x3 neighbourhood range
+    (at the thumbnail's scale) by more than INK_DELTA: drawn on the slide, not in the plate."""
+    s = thumb.width / page_w
+    x0, y0, x1, y1 = (round(v * s) for v in band)
+    box = (x0, y0, max(x1, x0 + 1), max(y1, y0 + 1))
+    t = _lum_image(thumb).crop(box)
+    pl = _lum_image(plate).resize(thumb.size, Image.BILINEAR)
+    lo = pl.filter(ImageFilter.MinFilter(3)).crop(box)
+    hi = pl.filter(ImageFilter.MaxFilter(3)).crop(box)
+    return sum(1 for v, a, b in zip(t.getdata(), lo.getdata(), hi.getdata())
+               if v < a - INK_DELTA or v > b + INK_DELTA)
+
+
+def _overflow_html(p: dict, layout: Layout, thumbs: dict, flags: list, unconfirmed: list) -> None:
+    path = (thumbs or {}).get(p["n"])
+    if path is None:
+        return  # no thumbnail: html boxes have no estimate to fall back on
+    plate = p.get("plate_png")
+    if not plate or not Path(plate).exists():
+        unconfirmed += [(p["n"], b["object_id"], "no plate image to compare") for b in p.get("boxes", [])]
+        return
+    thumb, plate_img = Image.open(path), Image.open(plate)
+    for box in p.get("boxes", []):
+        band = scan_band(box, p, layout)
+        if band is None:
+            unconfirmed.append((p["n"], box["object_id"], "no clear strip below the box"))
+            continue
+        if ink_vs_plate(thumb, plate_img, band, layout.page["w"]) >= INK_MIN_PX:
+            flags.append((p["n"], box["object_id"], round(box["h"], 1), round(box["h"], 1)))
+
+
 def overflow(plans: list, layout: Layout, live: dict | None = None,
              thumbs: dict[int, Path] | None = None) -> tuple[list, list]:
     """(flags, unconfirmed). flags: (n, object_id, est_h, box_h)."""
     flags, unconfirmed = [], []
     for p in plans:
         if p.get("status") != "native":
+            continue
+        if p.get("style") == "html":
+            _overflow_html(p, layout, thumbs, flags, unconfirmed)
             continue
         shapes = ((live or {}).get(p["slide_id"]) or {}).get("shapes", {})
         img = None
@@ -557,6 +620,142 @@ def contact_sheet(thumbs: dict[int, Path], out: Path, total: int | None = None) 
     return out
 
 
+# ------------------------------------------------------------------ html style: fidelity
+
+def _live_positions(presentation: dict) -> dict[str, dict[str, tuple[float, float]]]:
+    """slide id -> {objectId: (x, y) pt} for every page element, groups flattened."""
+    def walk(elements, out):
+        for el in elements or []:
+            if "elementGroup" in el:
+                walk(el["elementGroup"].get("children"), out)
+            tr = el.get("transform") or {}
+            k = 1 if tr.get("unit") == "PT" else 1 / EMU_PER_PT
+            out[el.get("objectId")] = ((tr.get("translateX") or 0) * k, (tr.get("translateY") or 0) * k)
+        return out
+    return {sl.get("objectId"): walk(sl.get("pageElements"), {}) for sl in presentation.get("slides") or []}
+
+
+def position_readback(plans: list, presentation: dict) -> dict[int, dict]:
+    """n -> {boxes, max_dx, max_dy, off: [ids moved > POS_TOL pt], missing: [ids not in the deck]}
+    for native html-style slides: live element x/y against the planned (measured) x/y."""
+    live = _live_positions(presentation)
+    out = {}
+    for p in plans:
+        if p.get("style") != "html" or p.get("status") != "native" or not p.get("boxes"):
+            continue
+        els = live.get(p["slide_id"]) or {}
+        dx = dy = 0.0
+        off, missing = [], []
+        for b in p["boxes"]:
+            if b["object_id"] not in els:
+                missing.append(b["object_id"])
+                continue
+            x, y = els[b["object_id"]]
+            ddx, ddy = abs(x - b["x"]), abs(y - b["y"])
+            dx, dy = max(dx, ddx), max(dy, ddy)
+            if max(ddx, ddy) > POS_TOL:
+                off.append(b["object_id"])
+        out[p["n"]] = {"boxes": len(p["boxes"]), "max_dx": round(dx, 1), "max_dy": round(dy, 1),
+                       "off": off, "missing": missing}
+    return out
+
+
+def image_diff(a: Path, b: Path) -> float:
+    """Mean absolute difference of two slide images at 400x225 greyscale (0-255)."""
+    ga = Image.open(a).convert("L").resize(THUMB, Image.LANCZOS)
+    gb = Image.open(b).convert("L").resize(THUMB, Image.LANCZOS)
+    return round(sum(abs(x - y) for x, y in zip(ga.getdata(), gb.getdata())) / (THUMB[0] * THUMB[1]), 1)
+
+
+def render_html_slides(deck: dict, plans: list, out_dir: Path, notes: list) -> dict[int, Path]:
+    """n -> Chrome render of the HTML slide (3 at a time), for the image difference."""
+    src = _resolve_source(deck.get("source"))
+    if src is None or not assets.CHROME:
+        notes.append("image difference not measured: " + ("source HTML not found" if src is None
+                                                          else "Chrome not found"))
+        return {}
+    index = {s["n"]: s.get("html_index") or s["n"] for s in deck.get("slides", [])}
+    rdir = out_dir / "renders"
+
+    def one(n):
+        try:
+            return n, assets.render_slide_png(src, index.get(n, n), rdir / f"s{n:02d}.png")
+        except Exception as e:  # noqa: BLE001 (one slide must not stop the check)
+            _log(f"render slide {n} failed: {e}")
+            return n, None
+
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        return {n: p for n, p in ex.map(one, [p["n"] for p in plans]) if p is not None}
+
+
+def compare_sheet(thumbs: dict[int, Path], renders: dict[int, Path], out: Path, total: int) -> Path:
+    """One row per slide: the Slides thumbnail (left) beside the Chrome render (right)."""
+    W = 2 * THUMB[0] + 3 * GUTTER
+    head = 18
+    H = head + total * (THUMB[1] + GUTTER) + GUTTER
+    sheet = Image.new("RGB", (W, H), (96, 96, 96))
+    draw = ImageDraw.Draw(sheet)
+    draw.text((GUTTER, 4), "Google Slides", fill=(255, 255, 255))
+    draw.text((2 * GUTTER + THUMB[0], 4), "HTML (Chrome)", fill=(255, 255, 255))
+    for i, n in enumerate(range(1, total + 1)):
+        y = head + GUTTER + i * (THUMB[1] + GUTTER)
+        for j, src in enumerate((thumbs, renders)):
+            x = GUTTER + j * (THUMB[0] + GUTTER)
+            if n in src:
+                sheet.paste(Image.open(src[n]).convert("RGB").resize(THUMB, Image.LANCZOS), (x, y))
+            else:
+                draw.rectangle((x, y, x + THUMB[0] - 1, y + THUMB[1] - 1), fill=(160, 40, 40))
+                draw.text((x + 8, y + THUMB[1] // 2), "missing", fill=(255, 255, 255))
+        by = y + THUMB[1] - 14
+        draw.rectangle((GUTTER, by, GUTTER + 26, by + 14), fill=(0, 0, 0))
+        draw.text((GUTTER + 4, by + 2), f"{n:02d}", fill=(255, 255, 255))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(out)
+    return out
+
+
+def _html_report(plans: list, res: CheckResult) -> list[str]:
+    L = []
+    subs: dict[tuple, list[int]] = {}
+    spacing, plate, hidden = [], [], []
+    for p in plans:
+        info = p.get("html") or {}
+        for sub in info.get("substitutions") or []:
+            subs.setdefault((sub["family"], sub["used"]), []).append(p["n"])
+        spacing += [(p["n"], x) for x in info.get("letter_spacing") or []]
+        plate += [(p["n"], x) for x in info.get("left_in_plate") or []]
+        hidden += [(p["n"], x) for x in info.get("hidden") or []]
+    L += ["", "## Font substitutions", ""]
+    L += [f"- `{fam}` -> {used} (slides {', '.join(map(str, ns))}): Google Fonts does not have it"
+          for (fam, used), ns in subs.items()] or ["None."]
+    L += ["", "## Letter-spacing dropped", "", "Slides has no letter-spacing; these boxes are set without it.", ""]
+    L += [f"- slide {n} `{x['object_id']}` {x['px']}px: {_cell(x['text'])}" for n, x in spacing] or ["None."]
+    L += ["", "## Left in plate", "", "This text is part of the slide picture, not editable "
+          "(rotated, clipped, or inside SVG).", ""]
+    L += [f"- slide {n}: `{_cell(x['text'][:80])}` ({_cell(x['reason'])})" for n, x in plate] or ["None."]
+    L += ["", "## Hidden in the HTML", "", "In the HTML source but not drawn by Chrome (for example "
+          "`display:none`), so not built and not required.", ""]
+    by_text: dict[str, list[int]] = {}
+    for n, t in hidden:
+        by_text.setdefault(t, []).append(n)
+    L += [f"- `{_cell(t[:80])}` (slides {', '.join(map(str, ns))})" for t, ns in by_text.items()] or ["None."]
+    L += ["", "## Position read-back", "",
+          f"Live text-box x/y against the measured position (information; boxes over {POS_TOL:g}pt are named).",
+          "", "| n | boxes | max dx pt | max dy pt | over tolerance | missing |", "|---|---|---|---|---|---|"]
+    for n, r in sorted(res.positions.items()):
+        L.append(f"| {n} | {r['boxes']} | {r['max_dx']} | {r['max_dy']} | {_cell(', '.join(r['off']))} | "
+                 f"{_cell(', '.join(r['missing']))} |")
+    L += ["", "## Image difference", "",
+          "Mean absolute difference between the Slides thumbnail and the Chrome render, 400x225 greyscale, "
+          "0-255 (information, not pass/fail). Side by side: "
+          f"{res.compare.name if res.compare else 'not made'}.", ""]
+    if res.image_diff:
+        L += ["| n | difference |", "|---|---|", *[f"| {n} | {d} |" for n, d in sorted(res.image_diff.items())]]
+    else:
+        L.append("Not measured.")
+    return L
+
+
 # ------------------------------------------------------------------ report
 
 def _shared_assets(meta: dict) -> list[str]:
@@ -601,7 +800,10 @@ def write_report(path: Path, pid: str, deck: dict, plans: list, res: CheckResult
     L += [f"- slide {n}: " + "; ".join(f"`{t}`" for t in miss) for n, miss in sorted(res.coverage_missing.items())] \
         or ["None."]
     L += ["", "## Style violations", ""]
-    L += [f"- {v}" for v in res.style_violations] or ["None."]
+    if res.style == "html":
+        L.append("Style audit skipped: html style keeps the HTML's own styles (no roles).")
+    else:
+        L += [f"- {v}" for v in res.style_violations] or ["None."]
     if res.unconfirmed:
         L += ["", "## Overflow not pixel-checked", "",
               *[f"- slide {n} {oid}: {why}" for n, oid, why in res.unconfirmed]]
@@ -609,15 +811,22 @@ def write_report(path: Path, pid: str, deck: dict, plans: list, res: CheckResult
     if fb:
         L += ["", "## Fallback slides", "",
               f"Slides {', '.join(map(str, fb))} are images of the HTML slide, not native Slides objects:",
-              "- They look like the HTML, not like the native slides around them (kicker case, rules, "
-              "page-number position and fonts follow the HTML).",
+              *([] if res.style == "html" else [
+                  "- They look like the HTML, not like the native slides around them (kicker case, rules, "
+                  "page-number position and fonts follow the HTML)."]),
               "- Their text is not editable in Slides; it is in each slide's speaker notes.",
               "- Coverage for them is checked against the speaker notes; overflow is not checked."]
-    drop = sorted({t for v in res.dropped.values() for t in v})
-    L += ["", "## Dropped by design", "", (", ".join(f"`{t}`" for t in drop) if drop else "None.")]
+    if res.style == "html":
+        L += _html_report(plans, res)
+    else:
+        drop = sorted({t for v in res.dropped.values() for t in v})
+        L += ["", "## Dropped by design", "", (", ".join(f"`{t}`" for t in drop) if drop else "None.")]
     shared = _shared_assets(meta)
     L += ["", "## Shared asset files (anyone with the link can view)", ""]
     L += [f"- {s}" for s in shared] or ["Not listed in build.json."]
+    plates = meta.get("plates") if isinstance(meta.get("plates"), list) else []
+    if plates:
+        L += ["", f"Plate pictures among them: {', '.join(map(str, plates))}"]
     if res.notes:
         L += ["", "## Notes", "", *[f"- {x}" for x in res.notes]]
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -635,8 +844,10 @@ def check(pid: str, deck: dict, plans: list, out_dir: Path, *, thumbnails: bool 
     presentation = gws.get(pid)
     live = slide_texts(presentation)
 
-    res.coverage_missing, res.dropped = coverage(deck, plans, presentation, layout, res.notes)
-    res.style_violations = style_audit(presentation, plans, deck, layout)
+    html = any(p.get("style") == "html" for p in plans)
+    res.style = "html" if html else "template"
+    res.coverage_missing, res.dropped = coverage(deck, plans, presentation, layout, res.notes, fold=html)
+    res.style_violations = [] if html else style_audit(presentation, plans, deck, layout)
 
     live_ids = [sl.get("objectId") for sl in presentation.get("slides") or []]
     planned = [p["slide_id"] for p in plans]
@@ -654,6 +865,13 @@ def check(pid: str, deck: dict, plans: list, out_dir: Path, *, thumbnails: bool 
         res.contact = contact_sheet(thumbs, out_dir / "contact.png", len(plans))
     res.overflow, res.unconfirmed = overflow(plans, layout, live, thumbs)
     res.overflow += table_overflow(plans, presentation, layout)
+    if html:
+        res.positions = position_readback(plans, presentation)
+        if thumbnails:
+            renders = render_html_slides(deck, plans, out_dir, res.notes)
+            res.image_diff = {n: image_diff(thumbs[n], renders[n]) for n in sorted(thumbs) if n in renders}
+            if renders:
+                res.compare = compare_sheet(thumbs, renders, out_dir / "compare.png", len(plans))
 
     meta, has_meta = {}, (out_dir / "build.json").exists()
     try:

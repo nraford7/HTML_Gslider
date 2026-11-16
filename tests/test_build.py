@@ -99,6 +99,9 @@ def fake_compile(monkeypatch):
                     "raw_text": []} for n in range(1, 11)]})
     monkeypatch.setattr(build, "compile_deck", lambda deck, layout, assets, ivory, logo=True: state["plans"])
     monkeypatch.setattr(build, "load_layout", lambda: None)
+    # html style (the default): no Chrome; the same fixed plans
+    monkeypatch.setattr(build, "_measure_all", lambda html_path, wraps, workdir, workers=3: {})
+    monkeypatch.setattr(build, "compile_html_deck", lambda deck, measures, assets: state["plans"])
     return state
 
 
@@ -202,7 +205,7 @@ def test_no_brand_means_no_logo(google, monkeypatch):
     published = []
     monkeypatch.setattr(build.assets, "publish_image", lambda d, m, n: published.append(n) or "u")
     assert build.logo_files() == {}
-    res = build.build(FIX / "cols3.html", "T")
+    res = build.build(FIX / "cols3.html", "T", style="template")
     reqs = [r for p in res.plans for r in p["requests"]]
     assert not any("logo" in r.get("createImage", {}).get("objectId", "") for r in reqs)
     assert not any("logo" in n for n in published)
@@ -234,7 +237,7 @@ def test_two_pass_assets_publish_logo_and_fallback(google, monkeypatch):
     monkeypatch.setattr(build.assets, "CHROME", "/fake/chrome")
     monkeypatch.setattr(build.assets, "publish_image", fake_publish)
     monkeypatch.setattr(build.assets, "render_slide_png", fake_render)
-    res = build.build(FIX / "overflow.html", "T")
+    res = build.build(FIX / "overflow.html", "T", style="template")
     assert [p["status"] for p in res.plans] == ["native", "fallback"]
     assert rendered == [2]  # .slide-wrap index of the fallback slide
     assert any("logo" in n for n in published) and any("fallback" in n for n in published)
@@ -289,7 +292,8 @@ def test_cli_parse_writes_json(tmp_path, capsys):
 def test_cli_parses_ivory_and_flags(monkeypatch, tmp_path):
     seen = {}
 
-    def fake_build(html_path, title, ivory=frozenset(), include_internal=False, into=None, out_dir=None):
+    def fake_build(html_path, title, ivory=frozenset(), include_internal=False, into=None, out_dir=None,
+                   style="html"):
         seen.update(title=title, ivory=ivory, inc=include_internal, into=into)
         return build.BuildResult("p", "https://x/p", [], tmp_path)
 
@@ -455,7 +459,7 @@ def test_notes_failure_message(google, fake_compile, html):
 
 
 def test_ivory_out_of_range_warns(google, fake_compile, html, capsys):
-    build.build(html, "T", ivory={3, 11, 0})
+    build.build(html, "T", ivory={3, 11, 0}, style="template")
     err = capsys.readouterr().err
     assert "--ivory" in err and "0, 11" in err
 
@@ -553,7 +557,7 @@ def test_chrome_env_missing_path_refused(google, fake_compile, html, monkeypatch
     published = []
     monkeypatch.setattr(build.assets, "publish_image", lambda *a: published.append(a) or "https://u/id=1")
     with pytest.raises(build.BuildError, match="GSLIDER_CHROME") as e:
-        build.build(html, "T")
+        build.build(html, "T", style="template")
     assert "no-such-chrome" in str(e.value)
     assert published == [] and google.writes == []
 
@@ -565,7 +569,7 @@ def test_build_refuses_fallback_without_chrome_before_upload(google, fake_compil
     calls = []
     monkeypatch.setattr(build, "publish_assets", lambda *a, **k: calls.append(a) or {})
     with pytest.raises(build.BuildError, match="GSLIDER_CHROME"):
-        build.build(html, "T")
+        build.build(html, "T", style="template")
     assert calls == [] and google.writes == []
 
 
@@ -761,3 +765,112 @@ def test_push_does_not_retry_other_errors(monkeypatch):
     with pytest.raises(build.BuildError, match="slide 1"):
         build.push("pid", [{"n": 1, "slide_id": "s01_slide", "status": "native", "requests": [{}]}])
     assert calls["n"] == 1
+
+
+# --- html style (Task 6) ---------------------------------------------------------------
+
+def _fake_measure(n, plate):
+    return {"n": n, "background": "#f4f0e7", "fonts_status": "loaded", "unloaded": [],
+            "blocks": [{"x": 120, "y": 100, "w": 900, "h": 96, "lines": 1, "align": "left",
+                        "line_height_px": 96, "letter_spacing_px": 0, "transform": None,
+                        "runs": [{"text": "Heading", "family": "Georgia", "generic": "serif", "size_px": 80,
+                                  "bold": False, "italic": False, "underline": False, "color": "#1a1917"}]}],
+            "skipped": [{"text": "ROTATED LABEL", "reason": "transform rotate"}], "plate": plate}
+
+
+def test_build_style_html_measures_and_publishes_plates(google, monkeypatch, tmp_path):
+    src = tmp_path / "deck.html"
+    src.write_text('<div class="slide-wrap" data-slide-id="version-note"><div class="slide">v</div></div>'
+                   '<div class="slide-wrap" data-slide-id="a"><div class="slide">'
+                   '<h1>Heading</h1><div>ROTATED LABEL</div></div></div>')
+    measured, published = [], []
+
+    def fake_measure(html_path, n, workdir):
+        measured.append(n)
+        plate = Path(workdir) / f"plate_s{n:02d}.png"
+        plate.parent.mkdir(parents=True, exist_ok=True)
+        plate.write_bytes(b"\x89PNG plate")
+        return _fake_measure(n, plate)
+
+    def fake_publish(data, mime, name):
+        published.append(name)
+        return f"https://drive.google.com/uc?export=download&id=f{len(published)}"
+
+    monkeypatch.setattr(build.assets, "CHROME", "/fake/chrome")
+    monkeypatch.setattr(build.M, "measure_slide", fake_measure)
+    monkeypatch.setattr(build.assets, "publish_image", fake_publish)
+    monkeypatch.setattr("gslider.htmlstyle.slides_family", lambda fam, gen: (fam, False))
+    res = build.build(src, "T")
+    assert measured == [2]  # .slide-wrap index (the internal slide is skipped)
+    assert published == ["deck slide 01 plate.png"]
+    (plan,) = res.plans
+    assert plan["status"] == "native" and plan["style"] == "html"
+    imgs = [r["createImage"] for r in plan["requests"] if "createImage" in r]
+    assert imgs[0]["objectId"] == "s01_plate" and imgs[0]["url"].endswith("id=f1")
+    meta = json.loads((res.out_dir / "build.json").read_text())
+    assert meta["style"] == "html" and meta["plates"] == ["f1"] and meta["shared_assets"] == ["f1"]
+    deck = json.loads((res.out_dir / "deck.json").read_text())
+    assert deck["slides"][0]["dropped_text"] == ["ROTATED LABEL"]
+
+
+def test_build_style_html_measure_failure_falls_back(google, monkeypatch, tmp_path):
+    src = tmp_path / "deck.html"
+    src.write_text('<div class="slide-wrap"><div class="slide"><h1>Heading</h1></div></div>')
+    rendered = []
+
+    def boom(html_path, n, workdir):
+        raise build.M.MeasureError("slide 1: measure script still pending")
+
+    def fake_render(html_path, n, out):
+        rendered.append(n)
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_bytes(b"\x89PNG")
+        return Path(out)
+
+    monkeypatch.setattr(build.assets, "CHROME", "/fake/chrome")
+    monkeypatch.setattr(build.M, "measure_slide", boom)
+    monkeypatch.setattr(build.assets, "render_slide_png", fake_render)
+    monkeypatch.setattr(build.assets, "publish_image", lambda d, m, n: "https://u/uc?id=x")
+    res = build.build(src, "T")
+    assert res.plans[0]["status"] == "fallback" and "pending" in res.plans[0]["reason"]
+    assert rendered == [1]
+
+
+def test_build_style_html_without_chrome_refused(google, monkeypatch, tmp_path):
+    src = tmp_path / "deck.html"
+    src.write_text('<div class="slide-wrap"><div class="slide"><h1>Heading</h1></div></div>')
+    monkeypatch.delenv("GSLIDER_CHROME", raising=False)
+    monkeypatch.setattr(build.assets, "CHROME", None)
+    with pytest.raises(build.BuildError, match="--style template"):
+        build.build(src, "T")
+    assert google.writes == []
+
+
+def test_build_style_template_unchanged(google, fake_compile, html, monkeypatch):
+    calls = []
+    monkeypatch.setattr(build, "compile_deck",
+                        lambda deck, layout, assets, ivory, logo=True: calls.append("template") or fake_compile["plans"])
+    monkeypatch.setattr(build, "compile_html_deck", lambda *a: pytest.fail("html compile in template style"))
+    monkeypatch.setattr(build, "_measure_all", lambda *a, **k: pytest.fail("measured in template style"))
+    res = build.build(html, "T", style="template")
+    assert calls == ["template"] and len(res.plans) == 10
+    assert json.loads((res.out_dir / "build.json").read_text())["style"] == "template"
+
+
+def test_build_unknown_style_refused(google, fake_compile, html):
+    with pytest.raises(build.BuildError, match="unknown style"):
+        build.build(html, "T", style="fancy")
+
+
+def test_cli_style_default_html_and_template(monkeypatch, tmp_path):
+    seen = []
+
+    def fake_build(html_path, title, ivory=frozenset(), include_internal=False, into=None, out_dir=None,
+                   style="html"):
+        seen.append(style)
+        return build.BuildResult("p", "https://x/p", [], tmp_path)
+
+    monkeypatch.setattr(build, "build", fake_build)
+    cli.main(["build", "d.html", "--title", "X"])
+    cli.main(["build", "d.html", "--title", "X", "--style", "template"])
+    assert seen == ["html", "template"]

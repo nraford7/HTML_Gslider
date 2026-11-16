@@ -15,6 +15,13 @@ still missing -> copy the base (or re-check comments and clear an `--into` deck)
 -> verify pageSize -> one batchUpdate per slide, in order (createSlide appends)
 -> delete the placeholder -> one read and one batch for the speaker notes of all
 fallback slides -> build.json done.
+Two styles. `html` (the default) measures every slide in Chrome (`measure.py`,
+3 at a time) and compiles with `htmlstyle.compile_html_deck`: a text-free plate
+picture per slide (asset `plate:<n>`, file ids also in build.json `plates`) under
+editable text boxes placed where Chrome drew the text. It needs Chrome for every
+slide and ignores `--ivory` and the brand logo. `template` compiles with
+`compile.compile_deck` and `layouts.yaml`: the fixed design.
+
 Any failure after the guard writes build.json status "failed" (error, last good
 slide, deck URL) and is raised as BuildError. An `--into` deck loses its old
 slides only at the clear step; a failure before it leaves the deck untouched.
@@ -40,7 +47,9 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 from gslider import assets, gws
+from gslider import measure as M
 from gslider.compile import compile_deck
+from gslider.htmlstyle import compile_html_deck
 from gslider.layout import load_layout
 from gslider.parse import INTERNAL_IDS, parse, to_jsonable
 
@@ -52,6 +61,10 @@ PAGE_EMU = (12192000, 6858000)
 PROTECTED_IDS = gws.PROTECTED_IDS  # from config/env; gws refuses writes to these too
 LOCK_NAME = ".gslider.lock"
 PLACEHOLDER = "gslider_clear"  # keeps the deck non-empty while old slides are removed
+STYLES = ("html", "template")
+MEASURE_WORKERS = 3
+
+
 def logo_files() -> dict[str, Path]:
     """Brand logo from config `"brand": {"logo": <png for dark slides>, "logo_dark": <png for light
     slides>}`. One file is used for both grounds when only one is set; none means no logo."""
@@ -179,10 +192,12 @@ def _images(obj, found: dict) -> dict:
 
 
 def publish_assets(keys: set[str], deck: dict, html_path: Path, html: str, slug: str,
-                   out_dir: Path, include_internal: bool, on_publish=None) -> dict[str, str]:
+                   out_dir: Path, include_internal: bool, on_publish=None,
+                   plates: dict[int, Path] | None = None) -> dict[str, str]:
     """Publish every asset key compile asked for; keys it cannot resolve are left out.
 
-    on_publish(url) runs after each key is published (build records the shared id)."""
+    plates: deck slide n -> plate PNG, for `plate:<n>` keys (html style).
+    on_publish(url, key) runs after each key is published (build records the shared id)."""
     logos = logo_files()
     images = _images(deck["slides"], {})
     wraps = None
@@ -202,13 +217,45 @@ def publish_assets(keys: set[str], deck: dict, html_path: Path, html: str, slug:
             _log(f"render fallback slide {n} (html slide-wrap {idx})")
             assets.render_slide_png(html_path, idx, png)
             urls[key] = assets.publish_image(png.read_bytes(), "image/png", f"{slug} slide {n:02d} fallback.png")
+        elif key.startswith("plate:"):
+            n = int(key.split(":", 1)[1])
+            png = (plates or {}).get(n)
+            if png is None:
+                continue
+            urls[key] = assets.publish_image(Path(png).read_bytes(), "image/png", f"{slug} slide {n:02d} plate.png")
         elif key in images:
             img = images[key]
             ext = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif"}.get(img["mime"], "bin")
             urls[key] = assets.publish_image(img["data"], img["mime"], f"{key[:16]}.{ext}")
         if on_publish and urls.get(key) and urls[key] != before:
-            on_publish(urls[key])
+            on_publish(urls[key], key)
     return urls
+
+
+def _measure_all(html_path: Path, wraps: dict[int, int], workdir: Path,
+                 workers: int = MEASURE_WORKERS) -> dict[int, dict]:
+    """Deck slide n -> SlideMeasure (Chrome, `workers` at a time). A slide Chrome could not
+    measure gets {"n", "error"} and falls back; the others are still built natively."""
+    if not assets.CHROME:
+        env = os.environ.get("GSLIDER_CHROME")
+        why = (f"GSLIDER_CHROME={env} does not exist" if env else
+               "Chrome not found (no GSLIDER_CHROME, no Google Chrome app, no google-chrome or chromium on PATH)")
+        raise BuildError(f"{why}; html style measures every slide in Chrome. Set GSLIDER_CHROME, "
+                         "or build with --style template; nothing published")
+
+    def one(item):
+        n, idx = item
+        try:
+            m = M.measure_slide(html_path, idx, workdir)
+        except Exception as e:  # noqa: BLE001 (one slide must not stop the deck)
+            _log(f"measure slide {n} failed: {e}")
+            return n, {"n": idx, "error": str(e) or repr(e)}
+        _log(f"measured slide {n} ({len(m.get('blocks') or [])} text blocks)")
+        return n, m
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        return dict(pool.map(one, sorted(wraps.items())))
 
 
 # --------------------------------------------------------------------- base
@@ -403,8 +450,10 @@ def _uc_id(url: str) -> str:
 
 
 def build(html_path, title: str, ivory=frozenset(), include_internal: bool = False,
-          into: str | None = None, out_dir: Path | None = None) -> BuildResult:
+          into: str | None = None, out_dir: Path | None = None, style: str = "html") -> BuildResult:
     html_path = Path(html_path)
+    if style not in STYLES:
+        raise BuildError(f"unknown style {style!r}; use one of {', '.join(STYLES)}")
     if into:
         guard_into(into)
     src = into or base_id()
@@ -418,14 +467,15 @@ def build(html_path, title: str, ivory=frozenset(), include_internal: bool = Fal
     ivory = set(ivory)
     meta = {"pid": into, "url": deck_url(into) if into else None, "title": title, "source": str(html_path),
             "base_id": None if into else src, "into": bool(into), "ivory": sorted(ivory),
-            "include_internal": include_internal, "status": "building", "shared_assets": [],
+            "include_internal": include_internal, "style": style, "status": "building",
+            "shared_assets": [], "plates": [],
             "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
     progress = {"last_good_slide": 0}
     with _out_lock(out_dir):
         _write(out_dir / "build.json", meta)
         try:
             plans = _build(html_path, html, slug, out_dir, title, ivory, include_internal, into, src,
-                           meta, progress)
+                           meta, progress, style)
         except BaseException as e:
             pid = meta.get("pid")
             meta.update(status="failed", error=str(e) or repr(e), last_good_slide=progress["last_good_slide"],
@@ -445,22 +495,14 @@ def build(html_path, title: str, ivory=frozenset(), include_internal: bool = Fal
     return BuildResult(meta["pid"], deck_url(meta["pid"]), plans, out_dir)
 
 
-def _build(html_path: Path, html: str, slug: str, out_dir: Path, title: str, ivory: set[int],
-           include_internal: bool, into: str | None, src: str, meta: dict, progress: dict) -> list[dict]:
-    deck = parse(html, include_internal=include_internal, source=str(html_path))
+def _compile_template(deck: dict, html_path: Path, html: str, slug: str, out_dir: Path, ivory: set[int],
+                      include_internal: bool, shared) -> list[dict]:
     layout = load_layout()
-
     logos = logo_files()
     plans = compile_deck(deck, layout, {}, ivory, logo=bool(logos))
     bad = sorted(n for n in ivory if not 1 <= n <= len(plans))
     if bad:
         _log(f"warning: --ivory {', '.join(map(str, bad))} not in 1-{len(plans)}; ignored")
-
-    def shared(url: str) -> None:
-        fid = _uc_id(url)
-        if fid not in meta["shared_assets"]:
-            meta["shared_assets"].append(fid)
-            _write(out_dir / "build.json", meta)
 
     needed = {k for p in plans for k in p["missing_assets"]}
     if any(k.startswith("fallback:") for k in needed) and not assets.CHROME:
@@ -474,6 +516,51 @@ def _build(html_path: Path, html: str, slug: str, out_dir: Path, title: str, ivo
                           on_publish=shared) if needed else {}
     if urls:
         plans = compile_deck(deck, layout, urls, ivory, logo=bool(logos))
+    return plans
+
+
+def _compile_html(deck: dict, html_path: Path, html: str, slug: str, out_dir: Path, ivory: set[int],
+                  include_internal: bool, shared) -> list[dict]:
+    if ivory:
+        _log("warning: --ivory applies to --style template only; ignored")
+    wraps = None
+    index = {}
+    for sl in deck["slides"]:
+        idx = sl.get("html_index")
+        if idx is None:  # older parse output: derive from the .slide-wrap order
+            wraps = wraps or wrap_indexes(html, include_internal)
+            idx = wraps.get(sl["n"], sl["n"])
+        index[sl["n"]] = idx
+    measures = _measure_all(html_path, index, out_dir / "measure")
+    plans = compile_html_deck(deck, measures, {})
+    needed = {k for p in plans for k in p["missing_assets"]}
+    plates = {n: Path(m["plate"]) for n, m in measures.items() if m.get("plate")}
+    urls = publish_assets(needed, deck, html_path, html, slug, out_dir, include_internal,
+                          on_publish=shared, plates=plates) if needed else {}
+    if urls:
+        plans = compile_html_deck(deck, measures, urls)
+    return plans
+
+
+def _build(html_path: Path, html: str, slug: str, out_dir: Path, title: str, ivory: set[int],
+           include_internal: bool, into: str | None, src: str, meta: dict, progress: dict,
+           style: str = "html") -> list[dict]:
+    deck = parse(html, include_internal=include_internal, source=str(html_path))
+
+    def shared(url: str, key: str = "") -> None:
+        fid = _uc_id(url)
+        changed = False
+        if fid not in meta["shared_assets"]:
+            meta["shared_assets"].append(fid)
+            changed = True
+        if key.startswith("plate:") and fid not in meta.setdefault("plates", []):
+            meta["plates"].append(fid)
+            changed = True
+        if changed:
+            _write(out_dir / "build.json", meta)
+
+    compile_fn = _compile_html if style == "html" else _compile_template
+    plans = compile_fn(deck, html_path, html, slug, out_dir, ivory, include_internal, shared)
     missing = {p["n"]: p["missing_assets"] for p in plans if p["missing_assets"]}
     if missing:
         detail = "; ".join(f"slide {n}: {', '.join(k)}" for n, k in missing.items())
@@ -482,6 +569,8 @@ def _build(html_path: Path, html: str, slug: str, out_dir: Path, title: str, ivo
     built = to_jsonable(deck)
     for sl, p in zip(built["slides"], plans):
         sl["ground"] = p["ground"]  # deck.json carries the ground as built
+        if p.get("style") == "html":  # html style builds page furniture too; only plate text is dropped
+            sl["dropped_text"] = list(p.get("dropped_text") or [])
     _write(out_dir / "deck.json", built)
     _write(out_dir / "plans.json", plans)
 

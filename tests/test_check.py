@@ -415,3 +415,160 @@ def test_check_flags_grown_table(deck, plans, pres, tmp_path, monkeypatch):
     _mock_get(monkeypatch, pres)
     res = C.check(PID, deck, plans, tmp_path, thumbnails=False, layout=load_layout())
     assert not res.ok and [oid for _, oid, *_ in res.overflow] == ["s01_table40"]
+
+
+# ------------------------------------------------------------------ html style (Task 6)
+
+IVORY = (244, 240, 231)
+
+
+def _html_fixture(tmp_path, monkeypatch, transform=None):
+    """One html-style slide: heading and body over an ivory plate with a red rule."""
+    from gslider import htmlstyle as H
+
+    monkeypatch.setattr(H, "slides_family", lambda fam, gen: ("Arial", True) if fam == "Helvetica" else (fam, False))
+    monkeypatch.setattr(H, "normal_line_ratio", lambda fam: None)
+    plate = tmp_path / "plate_s01.png"
+    img = Image.new("RGB", (1920, 1080), IVORY)
+    ImageDraw.Draw(img).rectangle((120, 370, 720, 376), fill=(181, 69, 43))  # a rule under the body
+    img.save(plate)
+
+    def run(text, fam="Georgia", size=80):
+        return {"text": text, "family": fam, "generic": "serif", "size_px": size, "bold": False,
+                "italic": False, "underline": False, "color": "#1a1917"}
+
+    m = {"n": 1, "background": "#f4f0e7", "fonts_status": "loaded", "unloaded": [], "plate": str(plate),
+         "skipped": [{"text": "SIDE NOTE", "reason": "transform rotate(-90deg)"}],
+         "blocks": [
+             {"x": 120, "y": 100, "w": 900, "h": 96, "lines": 1, "align": "left", "line_height_px": 96,
+              "letter_spacing_px": 0, "transform": transform, "runs": [run("Heading")]},
+             {"x": 120, "y": 300, "w": 900, "h": 48, "lines": 1, "align": "left", "line_height_px": 48,
+              "letter_spacing_px": 2, "transform": None, "runs": [run("Body text here", "Helvetica", 32)]}]}
+    deck = {"title": "t", "source": None, "slides": [
+        {"n": 1, "html_index": 1, "id": "one", "kind": "content", "ground": "ivory", "blocks": [],
+         "raw_text": ["Heading", "Body text here", "SIDE NOTE"], "dropped_text": []}]}
+    plans = H.compile_html_deck(deck, {1: m}, {"plate:1": "https://u/plate"})
+    deck["slides"][0]["dropped_text"] = plans[0]["dropped_text"]
+    shapes = []
+    for b in plans[0]["boxes"]:
+        shapes.append({"objectId": b["object_id"],
+                       "transform": {"scaleX": 1, "scaleY": 1, "translateX": round(b["x"] * 12700),
+                                     "translateY": round(b["y"] * 12700), "unit": "EMU"},
+                       "shape": _run(b["text"], {"red": 0.1, "green": 0.1, "blue": 0.1}, size=40)})
+    pres = {"slides": [{"objectId": "s01_slide", "pageElements": [
+        {"objectId": "s01_plate", "image": {}, "transform": {"translateX": 0, "translateY": 0}}, *shapes]}]}
+    return deck, plans, pres, plate
+
+
+def _html_thumb(tmp_path, plate, ink_below=None):
+    img = Image.open(plate).convert("RGB").resize((1600, 900))
+    if ink_below:
+        s = 1600 / 960
+        x0, y0, x1, y1 = ink_below
+        ImageDraw.Draw(img).rectangle((x0 * s + 4, y0 * s + 1, x0 * s + 60, y0 * s + 6), fill=(20, 20, 20))
+    path = tmp_path / "thumb_s01.png"
+    img.save(path)
+    return path
+
+
+def test_check_html_skips_style_audit(tmp_path, monkeypatch, layout):
+    deck, plans, pres, plate = _html_fixture(tmp_path, monkeypatch)
+    _mock_get(monkeypatch, pres)
+    (tmp_path / "build.json").write_text(json.dumps({"pid": PID, "status": "done", "style": "html",
+                                                     "plates": ["1plate"]}))
+    res = C.check(PID, deck, plans, tmp_path, thumbnails=False, layout=layout)
+    assert res.style == "html"
+    assert res.style_violations == []  # Comic Sans 20pt on every box would violate template roles
+    assert res.coverage_missing == {}
+    assert res.ok
+
+
+def test_html_coverage_ignores_case_from_text_transform(tmp_path, monkeypatch, layout):
+    deck, plans, pres, _ = _html_fixture(tmp_path, monkeypatch, transform="uppercase")
+    assert plans[0]["boxes"][0]["text"] == "HEADING"
+    for sl in pres["slides"]:
+        for el in sl["pageElements"]:
+            if el["objectId"] == "s01_t0":
+                el["shape"] = _run("HEADING")
+    missing, _ = C.coverage(deck, plans, pres, layout, fold=True)
+    assert missing == {}
+    missing, _ = C.coverage(deck, plans, pres, layout)
+    assert missing == {1: ["Heading"]}
+
+
+def test_obstacles_ignore_plate(tmp_path, monkeypatch, layout):
+    _, plans, _, _ = _html_fixture(tmp_path, monkeypatch)
+    obs = C.obstacles(plans[0], layout, "s01_t0")
+    assert len(obs) == 1  # the body box only: the full-page plate is not an obstacle
+
+
+def test_html_overflow_compares_against_plate(tmp_path, monkeypatch, layout):
+    _, plans, _, plate = _html_fixture(tmp_path, monkeypatch)
+    body = plans[0]["boxes"][1]
+    band = C.scan_band(body, plans[0], layout)
+    assert band is not None and band[3] - band[1] == pytest.approx(body["line_pt"])  # one line deep
+    assert band[1] < 185 < band[3]  # the plate's rule (y 185pt) lies inside the band
+    # the plate's own rule under the body is not ink: the thumbnail matches the plate there
+    flags, unconfirmed = C.overflow(plans, layout, None, {1: _html_thumb(tmp_path, plate)})
+    assert flags == [] and unconfirmed == []
+    flags, _ = C.overflow(plans, layout, None, {1: _html_thumb(tmp_path, plate, band)})
+    assert [oid for _, oid, *_ in flags] == ["s01_t1"]
+
+
+def test_html_overflow_without_plate_unconfirmed(tmp_path, monkeypatch, layout):
+    _, plans, _, plate = _html_fixture(tmp_path, monkeypatch)
+    thumb = _html_thumb(tmp_path, plate)
+    plate.unlink()
+    flags, unconfirmed = C.overflow(plans, layout, None, {1: thumb})
+    assert flags == [] and {why for *_, why in unconfirmed} == {"no plate image to compare"}
+
+
+def test_position_readback(tmp_path, monkeypatch):
+    _, plans, pres, _ = _html_fixture(tmp_path, monkeypatch)
+    el = next(e for e in pres["slides"][0]["pageElements"] if e["objectId"] == "s01_t1")
+    el["transform"]["translateX"] += 5 * 12700  # 5pt to the right
+    pos = C.position_readback(plans, pres)
+    assert pos[1]["boxes"] == 2 and pos[1]["max_dx"] == pytest.approx(5.0) and pos[1]["max_dy"] == pytest.approx(0)
+    assert pos[1]["off"] == ["s01_t1"] and pos[1]["missing"] == []
+
+
+def test_image_diff_and_compare_sheet(tmp_path, monkeypatch):
+    a, b = tmp_path / "a.png", tmp_path / "b.png"
+    Image.new("RGB", (1600, 900), (100, 100, 100)).save(a)
+    Image.new("RGB", (1920, 1080), (110, 110, 110)).save(b)
+    assert C.image_diff(a, b) == pytest.approx(10, abs=0.5)
+    out = C.compare_sheet({1: a, 2: a}, {1: b}, tmp_path / "compare.png", 2)
+    w, h = Image.open(out).size
+    assert w == 2 * 400 + 3 * C.GUTTER and h >= 2 * 225
+
+
+def test_check_html_report_sections(tmp_path, monkeypatch, layout):
+    deck, plans, pres, plate = _html_fixture(tmp_path, monkeypatch)
+    _mock_get(monkeypatch, pres)
+    monkeypatch.setattr(C, "fetch_thumbs", lambda pid, pages, out: {1: _html_thumb(tmp_path, plate)})
+    src = tmp_path / "deck.html"
+    src.write_text("<div class='slide-wrap'></div>")
+    deck["source"] = str(src)
+    rendered = []
+
+    def fake_render(html_path, n, out):
+        rendered.append(n)
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Image.open(plate).save(out)
+        return Path(out)
+
+    monkeypatch.setattr(C.assets, "CHROME", "/fake/chrome")
+    monkeypatch.setattr(C.assets, "render_slide_png", fake_render)
+    (tmp_path / "build.json").write_text(json.dumps({"pid": PID, "status": "done", "style": "html",
+                                                     "plates": ["1plate"], "shared_assets": ["1plate"]}))
+    res = C.check(PID, deck, plans, tmp_path, layout=layout)
+    assert rendered == [1]
+    assert res.compare and res.compare.exists() and 1 in res.image_diff
+    rep = res.report.read_text(encoding="utf-8")
+    for heading in ("## Font substitutions", "## Letter-spacing dropped", "## Left in plate", "## Hidden in the HTML",
+                    "## Position read-back", "## Image difference"):
+        assert heading in rep, heading
+    assert "`Helvetica` -> Arial" in rep
+    assert "SIDE NOTE" in rep and "rotate" in rep
+    assert "compare.png" in rep
+    assert "Style audit skipped" in rep
