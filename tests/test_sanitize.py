@@ -396,6 +396,27 @@ def test_style_strings_and_urls_escape_less_than(folder):
     assert "content:'\\3c b>'" in out and 'url("data:image/svg+xml,\\3c svg/>")' in out
 
 
+def test_svg_data_uri_with_parens_and_quotes_survives(folder):
+    svg = ("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'><path transform='rotate(45)' "
+           "fill='rgb(1,2,3)' d='M0 0'/></svg>")
+    out = _clean(f'<style>.a{{background:url("{svg}")}}</style>', folder)
+    css = re.search(r"<style>(.*?)</style>", out, re.S).group(1)
+    assert "< /" not in css and css.count("\\3c ") == 3
+    dq = "data:image/svg+xml,%3Csvg xmlns=\"http://www.w3.org/2000/svg\"%3E%3C/svg%3E"
+    out = _clean(f"<style>.b{{background:url('{dq}')}}</style>", folder)
+    assert 'url("data:image/svg+xml,%3Csvg xmlns=\\"http://www.w3.org/2000/svg\\"%3E%3C/svg%3E")' in out
+
+
+def test_comment_quote_does_not_desync_strings(folder):
+    out = _clean("<style>/* don't */ .a::after{content:'<b>'} /* <i> */</style>", folder)
+    assert "content:'\\3c b>'" in out and "/* < i> */" in out
+
+
+def test_cdo_kept_inside_strings(folder):
+    out = _clean("<style><!-- p{x:y} --> a::after{content:\"a<!--b\"}</style>", folder)
+    assert '"a\\3c !--b"' in out and "<!--" not in out
+
+
 def test_images_false_reads_nothing(folder, monkeypatch):
     monkeypatch.setattr(sanitize.fetch, "resolve_image", lambda *a: pytest.fail("read an image"))
     out = sanitize.safe_html("<img src='img/ok.png'><p style='background:url(img/ok.png)'>", folder, images=False)

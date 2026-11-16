@@ -78,14 +78,23 @@ MAX_ROUNDS = 4
 _DROP_TAGS = ("script", "iframe", "frame", "frameset", "object", "embed", "portal", "applet", "base", "noembed",
               "mglyph", "malignmark", "noscript", "noframes", "fencedframe")
 _PRE_TAGS = ("pre", "textarea", "listing")
-# a CSS string or url(...) token (where `<` is escaped), else a `<` that could open a tag
-_STYLE_LT = re.compile(r"""("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|url\([^)]*\))|<(?=[A-Za-z/!?])""", re.I | re.S)
+# in order: a CSS comment, a string or unquoted url(...), the `<!--` marker, a `<` that could open a tag
+_STYLE_LT = re.compile(r"""(?P<c>/\*.*?\*/)|(?P<s>"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'"""
+                       r"""|url\(\s*(?!['"])[^)]*\))|(?P<cdo><!--)|<(?=[A-Za-z/!?])""", re.I | re.S)
 
 
 def _style_text(css: str) -> str:
     """css with no `<` that could open a tag (see the module notes)."""
-    css = css.replace("<!--", "")
-    return _STYLE_LT.sub(lambda m: m.group(1).replace("<", "\\3c ") if m.group(1) else "< ", css)
+    def one(m: re.Match) -> str:
+        if m.group("c"):
+            return _TAG_LT.sub("< ", m.group("c"))
+        if m.group("s"):
+            return m.group("s").replace("<", "\\3c ")
+        return "" if m.group("cdo") else "< "
+    return _STYLE_LT.sub(one, css)
+
+
+_TAG_LT = re.compile(r"<(?=[A-Za-z/!?])")
 
 
 _URL_ATTRS = ("src", "srcset", "href", "xlink:href", "poster", "data", "background", "lowsrc", "dynsrc",
@@ -200,27 +209,43 @@ def _is_font_css(url: str) -> bool:
     return parts.scheme.lower() == "https" and (parts.hostname or "").lower() == FONT_CSS_HOST
 
 
+_ANY_ESCAPE = re.compile(r"\\(?:([0-9a-fA-F]{1,6})[ \t\n\r\f]?|(\n)|(.))", re.S)
+
+
+def _css_value(text: str) -> str:
+    """The value of a CSS string or url body: every escape decoded (what Chrome loads)."""
+    def one(m: re.Match) -> str:
+        if m.group(1):
+            cp = int(m.group(1), 16)
+            return chr(cp) if 0 < cp <= 0x10FFFF and not 0xD800 <= cp <= 0xDFFF else "\ufffd"
+        return "" if m.group(2) else m.group(3)
+    return _ANY_ESCAPE.sub(one, text)
+
+
 def _css(css: str, ctx: _Ctx, rel_dir: str = "", depth: int = 0) -> str:
     """CSS with every url() rewritten (see the module doc)."""
     css = _unescape(css)
 
+    def quoted(u: str) -> str:
+        return '"' + u.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\a ") + '"'
+
     def url_in(value: str, font: bool) -> str:
-        v = value.strip()
+        v = _css_value(value.strip())
         if v.startswith("#"):
-            return f"url({value})"
+            return f"url({value})"  # an in-page reference, kept as written
         if font:
             got = ctx.font(_rebase(v, rel_dir))
-            return f'url("{got}")' if got else 'local("gslider-not-loaded")'
+            return f"url({quoted(got)})" if got else 'local("gslider-not-loaded")'
         got = ctx.image(_rebase(v, rel_dir))
-        return f'url("{got}")' if got else "none"
+        return f"url({quoted(got)})" if got else "none"
 
     def token(m: re.Match) -> str:
         if m.group("face"):
             return _URL.sub(lambda u: url_in(u.group(2), True), m.group("face"))
         if m.group("import"):
-            target = (m.group("iurl") if m.group("iurl") is not None else m.group("surl")) or ""
+            target = _css_value((m.group("iurl") if m.group("iurl") is not None else m.group("surl")) or "")
             if _is_font_css(target):
-                return f'@import url("{target.strip()}");'
+                return f"@import url({quoted(target.strip())});"
             return _stylesheet(target, ctx, rel_dir, depth) or ""
         return url_in(m.group("u"), False)
 

@@ -676,7 +676,7 @@ def render_html_slides(deck: dict, plans: list, out_dir: Path, notes: list) -> d
         return {}
     try:
         build.check_slide_parity(src)
-    except build.BuildError as e:
+    except (build.BuildError, OSError, UnicodeDecodeError) as e:
         notes.append(f"image difference not measured: {e}")
         return {}
     index = {s["n"]: s.get("html_index") or s["n"] for s in deck.get("slides", [])}

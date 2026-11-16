@@ -575,3 +575,13 @@ def test_check_html_report_sections(tmp_path, monkeypatch, layout):
     assert "compare.png" in rep
     assert "Style audit skipped" in rep
     assert "## Images not loaded" in rep and "- `../x.png`: outside the folder" in rep
+
+
+def test_render_html_slides_skips_a_deck_the_parsers_split(tmp_path, monkeypatch):
+    page = tmp_path / "d.html"
+    page.write_text('<!--><div class="slide-wrap">A</div>--><div class="slide-wrap">B</div>')
+    monkeypatch.setattr(C.assets, "CHROME", "/fake/chrome")
+    monkeypatch.setattr(C.assets, "render_slide_png", lambda *a: pytest.fail("rendered"))
+    notes = []
+    got = C.render_html_slides({"source": str(page), "slides": []}, [{"n": 1}], tmp_path / "o", notes)
+    assert got == {} and "read differently" in notes[0]

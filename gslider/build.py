@@ -185,7 +185,7 @@ def guard_into(pid: str) -> None:
 
 def check_slide_parity(html_path: Path) -> None:
     """Refuse a deck whose `.slide-wrap` list differs between html.parser (parse, wrap_indexes)
-    and the page Chrome is given (html5lib on `sanitize.safe_deck`): slide n would be measured
+    and the page Chrome is given (html5lib on the sanitised deck): slide n would be measured
     or rendered from another slide. A deck the sanitiser refuses is refused here, once.
     Images are not read (same structure, no network)."""
     def ids(soup):
@@ -200,7 +200,7 @@ def check_slide_parity(html_path: Path) -> None:
     if ids(BeautifulSoup(html, "html.parser")) != ids(sanitize.parse(safe)):
         raise BuildError("the deck's slides are read differently by the two HTML parsers gslider uses "
                          "(an odd comment such as <!--> or <!--->, or a slide inside <textarea>, <select>, "
-                         "<title> or <object>); fix that markup and build again")
+                         "<title>, <object>, <iframe> or <noscript>); fix that markup and build again")
 
 
 def wrap_indexes(html: str, include_internal: bool) -> dict[int, int]:
