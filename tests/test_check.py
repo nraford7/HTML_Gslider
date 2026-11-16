@@ -585,3 +585,12 @@ def test_render_html_slides_skips_a_deck_the_parsers_split(tmp_path, monkeypatch
     notes = []
     got = C.render_html_slides({"source": str(page), "slides": []}, [{"n": 1}], tmp_path / "o", notes)
     assert got == {} and "read differently" in notes[0]
+
+
+def test_render_html_slides_notes_an_unreadable_source(tmp_path, monkeypatch):
+    page = tmp_path / "d.html"
+    page.write_bytes(b'<div class="slide-wrap">\xff\xfe</div>')
+    monkeypatch.setattr(C.assets, "CHROME", "/fake/chrome")
+    notes = []
+    assert C.render_html_slides({"source": str(page), "slides": []}, [{"n": 1}], tmp_path / "o", notes) == {}
+    assert notes and notes[0].startswith("image difference not measured")

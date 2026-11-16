@@ -76,7 +76,7 @@ def test_srcset_poster_svg_image_and_css_urls(folder, tmp_path):
             f'<use href="other.svg#x"/><use href="#local"/><rect fill="url(file:///x.svg#g)"/></svg>')
     out = _clean(html, folder)
     assert "secret" not in out and "file:" not in out and "other.svg" not in out and "movie.mp4" not in out
-    assert "url(#grad)" in out and 'href="#local"' in out
+    assert 'url("#grad")' in out and 'href="#local"' in out
     assert out.count("data:image/png;base64,") == 2  # .b and the srcset candidate inside the folder
 
 
@@ -415,6 +415,53 @@ def test_comment_quote_does_not_desync_strings(folder):
 def test_cdo_kept_inside_strings(folder):
     out = _clean("<style><!-- p{x:y} --> a::after{content:\"a<!--b\"}</style>", folder)
     assert '"a\\3c !--b"' in out and "<!--" not in out
+
+
+def _style(out: str) -> str:
+    return re.search(r"<style>(.*?)</style>", out, re.S).group(1)
+
+
+def test_commented_import_and_url_left_alone(folder):
+    refused = []
+    css = ("/* @import url('https://fonts.googleapis.com/css2?family=Inter') */ .x{background:#0cc}"
+           " /* url(old.png) */ a::after{content:'url(x.png)'}")
+    out = _style(_clean(f"<style>{css}</style>", folder, refused))
+    assert out == css and refused == []
+
+
+def test_digit_escapes_in_selectors_kept(folder):
+    css = r".\31 0{color:red} .\32xl\:grid-cols-4{display:grid}"
+    assert _style(_clean(f"<style>{css}</style>", folder)) == css
+
+
+def test_hash_url_requoted(folder):
+    out = _style(_clean('<style>a{fill:url("#g(1)")} b{background:url("#x) , url(file:///s.png")}</style>', folder))
+    assert 'url("#g(1)")' in out and 'url("#x) , url(file:///s.png")' in out
+
+
+def test_unquoted_url_with_escaped_parens(folder, tmp_path):
+    (folder / "a(1).png").write_bytes((folder / "img" / "ok.png").read_bytes())
+    out = _style(_clean(r"<style>a{background:url(a\(1\).png)}</style>", folder))
+    assert out.startswith('a{background:url("data:image/png;base64,') and out.endswith('")}')
+
+
+def test_string_open_at_end_of_style(folder):
+    assert _style(_clean("<style>a::after{content:\"<b>", folder)) == 'a::after{content:"\\3c b>'
+
+
+def test_requoted_url_escapes_backslash_and_newline(folder):
+    out = _clean(r'<style>a{background:url("data:image/svg+xml,a\5c b\a c")}</style>', folder)
+    assert r'url("data:image/svg+xml,a\\b\a c")' in out and _clean(out, folder) == out
+
+
+def test_import_target_unescaped(folder):
+    out = _clean(r'<style>@import "https://fonts.googleapis.com/css2?family=A\20 B";</style>', folder)
+    assert '@import url("https://fonts.googleapis.com/css2?family=A B");' in out
+
+
+def test_out_of_range_escape_does_not_crash(folder):
+    out = _clean(r'<style>a{background:url("data:image/svg+xml,\110000\D800")}</style>', folder)
+    assert "��" in out
 
 
 def test_images_false_reads_nothing(folder, monkeypatch):

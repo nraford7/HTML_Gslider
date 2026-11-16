@@ -25,7 +25,7 @@ What it does:
   https://fonts.googleapis.com and https://fonts.gstatic.com (fonts only).
 - A local font in `@font-face` (inside base_dir, WOFF/WOFF2/TTF/OTF bytes) is inlined.
 - Other URL attributes (media `src`, `use` to another file, form actions, ...) are removed.
-- CSS escapes that spell a letter or digit (`\\75 rl(`) are decoded first, so they cannot
+- CSS escapes that spell a letter (`\\75 rl(`) are decoded first, so they cannot
   hide a `url(`.
 - The deck is parsed with html5lib (a WHATWG HTML5 parser, much closer to Chrome than
   html.parser), so `<!-->` and similar cannot hide markup. Comments, CDATA, processing
@@ -79,7 +79,7 @@ _DROP_TAGS = ("script", "iframe", "frame", "frameset", "object", "embed", "porta
               "mglyph", "malignmark", "noscript", "noframes", "fencedframe")
 _PRE_TAGS = ("pre", "textarea", "listing")
 # in order: a CSS comment, a string or unquoted url(...), the `<!--` marker, a `<` that could open a tag
-_STYLE_LT = re.compile(r"""(?P<c>/\*.*?\*/)|(?P<s>"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'"""
+_STYLE_LT = re.compile(r"""(?P<c>/\*.*?\*/)|(?P<s>"(?:\\.|[^"\\\n])*(?:"|\Z)|'(?:\\.|[^'\\\n])*(?:'|\Z)"""
                        r"""|url\(\s*(?!['"])[^)]*\))|(?P<cdo><!--)|<(?=[A-Za-z/!?])""", re.I | re.S)
 
 
@@ -106,11 +106,12 @@ _FONT_MIME = {b"wOF2": "font/woff2", b"wOFF": "font/woff", b"OTTO": "font/otf"}
 
 # CSS: an escape (\hex{1,6} plus one optional space, or \char)
 _ESCAPE = re.compile(r"\\(?:([0-9a-fA-F]{1,6})[ \t\n\r\f]?|([^\n0-9a-fA-F]))")
-# one of: an @font-face block, an @import, a url(...) token, an image-set( opening
+# one of: a comment or string (left as they are), an @font-face block, an @import, a url(...) token
 _CSS_TOKEN = re.compile(
-    r"(?P<face>@font-face\s*\{[^}]*\})"
+    r"(?P<skip>/\*.*?(?:\*/|\Z)|\"(?:\\.|[^\"\\\n])*(?:\"|\Z)|'(?:\\.|[^'\\\n])*(?:'|\Z))"
+    r"|(?P<face>@font-face\s*\{[^}]*\})"
     r"|(?P<import>@import\s+(?:url\(\s*(?P<iq>['\"]?)(?P<iurl>.*?)(?P=iq)\s*\)|(?P<sq>['\"])(?P<surl>.*?)(?P=sq))[^;]*;?)"
-    r"|(?P<url>url\(\s*(?P<q>['\"]?)(?P<u>.*?)(?P=q)\s*\))",
+    r"|(?P<url>url\(\s*(?:(?P<q>['\"])(?P<u>.*?)(?P=q)|(?P<uu>(?:\\.|[^)\\\s'\"])*))\s*\))",
     re.I | re.S)
 _URL = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.I | re.S)
 _IMAGE_SET_ITEM = re.compile(r"url\([^)]*\)|(['\"])(.*?)\1", re.I | re.S)
@@ -183,13 +184,14 @@ class _Ctx:
 # --------------------------------------------------------------------- CSS
 
 def _unescape(css: str) -> str:
-    """Decode CSS escapes that spell an ASCII letter or digit (the same text to CSS)."""
+    """Decode CSS escapes that spell an ASCII letter (the same text to CSS). Not digits:
+    `.\\31 0` is a valid class, `.10` is not; the words to unmask (url, import, ...) have none."""
     def one(m: re.Match) -> str:
         try:
             ch = chr(int(m.group(1), 16)) if m.group(1) else m.group(2)
         except (ValueError, OverflowError):
             return m.group(0)
-        return ch if ch.isascii() and ch.isalnum() else m.group(0)
+        return ch if ch.isascii() and ch.isalpha() else m.group(0)
     return _ESCAPE.sub(one, css)
 
 
@@ -232,7 +234,7 @@ def _css(css: str, ctx: _Ctx, rel_dir: str = "", depth: int = 0) -> str:
     def url_in(value: str, font: bool) -> str:
         v = _css_value(value.strip())
         if v.startswith("#"):
-            return f"url({value})"  # an in-page reference, kept as written
+            return f"url({quoted(v)})"  # an in-page reference
         if font:
             got = ctx.font(_rebase(v, rel_dir))
             return f"url({quoted(got)})" if got else 'local("gslider-not-loaded")'
@@ -240,6 +242,8 @@ def _css(css: str, ctx: _Ctx, rel_dir: str = "", depth: int = 0) -> str:
         return f"url({quoted(got)})" if got else "none"
 
     def token(m: re.Match) -> str:
+        if m.group("skip"):
+            return m.group("skip")
         if m.group("face"):
             return _URL.sub(lambda u: url_in(u.group(2), True), m.group("face"))
         if m.group("import"):
@@ -247,7 +251,7 @@ def _css(css: str, ctx: _Ctx, rel_dir: str = "", depth: int = 0) -> str:
             if _is_font_css(target):
                 return f"@import url({quoted(target.strip())});"
             return _stylesheet(target, ctx, rel_dir, depth) or ""
-        return url_in(m.group("u"), False)
+        return url_in(m.group("u") if m.group("u") is not None else m.group("uu"), False)
 
     return _CSS_TOKEN.sub(token, _image_set_strings(css))
 
