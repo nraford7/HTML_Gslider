@@ -1,0 +1,1500 @@
+[
+ {
+  "n": 1,
+  "slide_id": "s01_slide",
+  "html_id": "why",
+  "ground": "dark",
+  "notes_text": null,
+  "status": "native",
+  "reason": null,
+  "requests": [
+   {
+    "createSlide": {
+     "objectId": "s01_slide",
+     "slideLayoutReference": {
+      "predefinedLayout": "BLANK"
+     }
+    }
+   },
+   {
+    "updatePageProperties": {
+     "objectId": "s01_slide",
+     "pageProperties": {
+      "pageBackgroundFill": {
+       "solidFill": {
+        "color": {
+         "rgbColor": {
+          "red": 0.03137254901960784,
+          "green": 0.03137254901960784,
+          "blue": 0.023529411764705882
+         }
+        }
+       }
+      }
+     },
+     "fields": "pageBackgroundFill.solidFill.color"
+    }
+   },
+   {
+    "createImage": {
+     "objectId": "s01_logo0",
+     "url": "https://example.test/logo.png",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 1155700,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 330200,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 10680700,
+       "translateY": 279400,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "createShape": {
+     "objectId": "s01_section1",
+     "shapeType": "TEXT_BOX",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 9072880,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 352196,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 518160,
+       "translateY": 276860,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "insertText": {
+     "objectId": "s01_section1",
+     "insertionIndex": 0,
+     "text": "Why ACME / People"
+    }
+   },
+   {
+    "updateTextStyle": {
+     "objectId": "s01_section1",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "fontFamily": "Libre Franklin",
+      "weightedFontFamily": {
+       "fontFamily": "Libre Franklin",
+       "weight": 400
+      },
+      "fontSize": {
+       "magnitude": 11,
+       "unit": "PT"
+      },
+      "foregroundColor": {
+       "opaqueColor": {
+        "rgbColor": {
+         "red": 0.7843137254901961,
+         "green": 0.6392156862745098,
+         "blue": 0.3137254901960784
+        }
+       }
+      },
+      "bold": false,
+      "italic": false
+     },
+     "fields": "fontFamily,weightedFontFamily,fontSize,foregroundColor,bold,italic"
+    }
+   },
+   {
+    "updateParagraphStyle": {
+     "objectId": "s01_section1",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "lineSpacing": 100,
+      "spaceAbove": {
+       "magnitude": 0,
+       "unit": "PT"
+      },
+      "spaceBelow": {
+       "magnitude": 0,
+       "unit": "PT"
+      }
+     },
+     "fields": "lineSpacing,spaceAbove,spaceBelow"
+    }
+   },
+   {
+    "createShape": {
+     "objectId": "s01_title2",
+     "shapeType": "TEXT_BOX",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 11155680,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 656895,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 518160,
+       "translateY": 734060,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "insertText": {
+     "objectId": "s01_title2",
+     "insertionIndex": 0,
+     "text": "ACME helps the owners answer them."
+    }
+   },
+   {
+    "updateTextStyle": {
+     "objectId": "s01_title2",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "fontFamily": "Playfair Display",
+      "weightedFontFamily": {
+       "fontFamily": "Playfair Display",
+       "weight": 400
+      },
+      "fontSize": {
+       "magnitude": 28,
+       "unit": "PT"
+      },
+      "foregroundColor": {
+       "opaqueColor": {
+        "rgbColor": {
+         "red": 0.9490196078431372,
+         "green": 0.9372549019607843,
+         "blue": 0.9098039215686274
+        }
+       }
+      },
+      "bold": false,
+      "italic": false
+     },
+     "fields": "fontFamily,weightedFontFamily,fontSize,foregroundColor,bold,italic"
+    }
+   },
+   {
+    "updateParagraphStyle": {
+     "objectId": "s01_title2",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "lineSpacing": 100,
+      "spaceAbove": {
+       "magnitude": 0,
+       "unit": "PT"
+      },
+      "spaceBelow": {
+       "magnitude": 0,
+       "unit": "PT"
+      }
+     },
+     "fields": "lineSpacing,spaceAbove,spaceBelow"
+    }
+   },
+   {
+    "createShape": {
+     "objectId": "s01_lead3",
+     "shapeType": "TEXT_BOX",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 11155680,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 448399,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 518160,
+       "translateY": 1360475,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "insertText": {
+     "objectId": "s01_lead3",
+     "insertionIndex": 0,
+     "text": "One coherent programme."
+    }
+   },
+   {
+    "updateTextStyle": {
+     "objectId": "s01_lead3",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "fontFamily": "Libre Franklin",
+      "weightedFontFamily": {
+       "fontFamily": "Libre Franklin",
+       "weight": 400
+      },
+      "fontSize": {
+       "magnitude": 15,
+       "unit": "PT"
+      },
+      "foregroundColor": {
+       "opaqueColor": {
+        "rgbColor": {
+         "red": 0.8509803921568627,
+         "green": 0.8352941176470589,
+         "blue": 0.8
+        }
+       }
+      },
+      "bold": false,
+      "italic": false
+     },
+     "fields": "fontFamily,weightedFontFamily,fontSize,foregroundColor,bold,italic"
+    }
+   },
+   {
+    "updateParagraphStyle": {
+     "objectId": "s01_lead3",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "lineSpacing": 115,
+      "spaceAbove": {
+       "magnitude": 0,
+       "unit": "PT"
+      },
+      "spaceBelow": {
+       "magnitude": 0,
+       "unit": "PT"
+      }
+     },
+     "fields": "lineSpacing,spaceAbove,spaceBelow"
+    }
+   },
+   {
+    "createShape": {
+     "objectId": "s01_number4",
+     "shapeType": "TEXT_BOX",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 3611880,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 367589,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 518160,
+       "translateY": 1930794,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "insertText": {
+     "objectId": "s01_number4",
+     "insertionIndex": 0,
+     "text": "01"
+    }
+   },
+   {
+    "updateTextStyle": {
+     "objectId": "s01_number4",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "fontFamily": "Libre Franklin",
+      "weightedFontFamily": {
+       "fontFamily": "Libre Franklin",
+       "weight": 400
+      },
+      "fontSize": {
+       "magnitude": 12,
+       "unit": "PT"
+      },
+      "foregroundColor": {
+       "opaqueColor": {
+        "rgbColor": {
+         "red": 0.7843137254901961,
+         "green": 0.6392156862745098,
+         "blue": 0.3137254901960784
+        }
+       }
+      },
+      "bold": false,
+      "italic": false
+     },
+     "fields": "fontFamily,weightedFontFamily,fontSize,foregroundColor,bold,italic"
+    }
+   },
+   {
+    "updateParagraphStyle": {
+     "objectId": "s01_number4",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "lineSpacing": 100,
+      "spaceAbove": {
+       "magnitude": 0,
+       "unit": "PT"
+      },
+      "spaceBelow": {
+       "magnitude": 0,
+       "unit": "PT"
+      }
+     },
+     "fields": "lineSpacing,spaceAbove,spaceBelow"
+    }
+   },
+   {
+    "createShape": {
+     "objectId": "s01_number5",
+     "shapeType": "TEXT_BOX",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 3611880,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 367589,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 4226560,
+       "translateY": 1930794,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "insertText": {
+     "objectId": "s01_number5",
+     "insertionIndex": 0,
+     "text": "02"
+    }
+   },
+   {
+    "updateTextStyle": {
+     "objectId": "s01_number5",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "fontFamily": "Libre Franklin",
+      "weightedFontFamily": {
+       "fontFamily": "Libre Franklin",
+       "weight": 400
+      },
+      "fontSize": {
+       "magnitude": 12,
+       "unit": "PT"
+      },
+      "foregroundColor": {
+       "opaqueColor": {
+        "rgbColor": {
+         "red": 0.7843137254901961,
+         "green": 0.6392156862745098,
+         "blue": 0.3137254901960784
+        }
+       }
+      },
+      "bold": false,
+      "italic": false
+     },
+     "fields": "fontFamily,weightedFontFamily,fontSize,foregroundColor,bold,italic"
+    }
+   },
+   {
+    "updateParagraphStyle": {
+     "objectId": "s01_number5",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "lineSpacing": 100,
+      "spaceAbove": {
+       "magnitude": 0,
+       "unit": "PT"
+      },
+      "spaceBelow": {
+       "magnitude": 0,
+       "unit": "PT"
+      }
+     },
+     "fields": "lineSpacing,spaceAbove,spaceBelow"
+    }
+   },
+   {
+    "createShape": {
+     "objectId": "s01_number6",
+     "shapeType": "TEXT_BOX",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 3611880,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 367589,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 7934960,
+       "translateY": 1930794,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "insertText": {
+     "objectId": "s01_number6",
+     "insertionIndex": 0,
+     "text": "03"
+    }
+   },
+   {
+    "updateTextStyle": {
+     "objectId": "s01_number6",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "fontFamily": "Libre Franklin",
+      "weightedFontFamily": {
+       "fontFamily": "Libre Franklin",
+       "weight": 400
+      },
+      "fontSize": {
+       "magnitude": 12,
+       "unit": "PT"
+      },
+      "foregroundColor": {
+       "opaqueColor": {
+        "rgbColor": {
+         "red": 0.7843137254901961,
+         "green": 0.6392156862745098,
+         "blue": 0.3137254901960784
+        }
+       }
+      },
+      "bold": false,
+      "italic": false
+     },
+     "fields": "fontFamily,weightedFontFamily,fontSize,foregroundColor,bold,italic"
+    }
+   },
+   {
+    "updateParagraphStyle": {
+     "objectId": "s01_number6",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "lineSpacing": 100,
+      "spaceAbove": {
+       "magnitude": 0,
+       "unit": "PT"
+      },
+      "spaceBelow": {
+       "magnitude": 0,
+       "unit": "PT"
+      }
+     },
+     "fields": "lineSpacing,spaceAbove,spaceBelow"
+    }
+   },
+   {
+    "createLine": {
+     "objectId": "s01_rule7",
+     "category": "STRAIGHT",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 3429000,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 1,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 609600,
+       "translateY": 2288934,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "updateLineProperties": {
+     "objectId": "s01_rule7",
+     "lineProperties": {
+      "lineFill": {
+       "solidFill": {
+        "color": {
+         "rgbColor": {
+          "red": 0.788235294117647,
+          "green": 0.6627450980392157,
+          "blue": 0.43137254901960786
+         }
+        },
+        "alpha": 0.6
+       }
+      },
+      "weight": {
+       "magnitude": 0.75,
+       "unit": "PT"
+      }
+     },
+     "fields": "lineFill,weight"
+    }
+   },
+   {
+    "createLine": {
+     "objectId": "s01_rule8",
+     "category": "STRAIGHT",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 3429000,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 1,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 4318000,
+       "translateY": 2288934,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "updateLineProperties": {
+     "objectId": "s01_rule8",
+     "lineProperties": {
+      "lineFill": {
+       "solidFill": {
+        "color": {
+         "rgbColor": {
+          "red": 0.788235294117647,
+          "green": 0.6627450980392157,
+          "blue": 0.43137254901960786
+         }
+        },
+        "alpha": 0.6
+       }
+      },
+      "weight": {
+       "magnitude": 0.75,
+       "unit": "PT"
+      }
+     },
+     "fields": "lineFill,weight"
+    }
+   },
+   {
+    "createLine": {
+     "objectId": "s01_rule9",
+     "category": "STRAIGHT",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 3429000,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 1,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 8026400,
+       "translateY": 2288934,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "updateLineProperties": {
+     "objectId": "s01_rule9",
+     "lineProperties": {
+      "lineFill": {
+       "solidFill": {
+        "color": {
+         "rgbColor": {
+          "red": 0.788235294117647,
+          "green": 0.6627450980392157,
+          "blue": 0.43137254901960786
+         }
+        },
+        "alpha": 0.6
+       }
+      },
+      "weight": {
+       "magnitude": 0.75,
+       "unit": "PT"
+      }
+     },
+     "fields": "lineFill,weight"
+    }
+   },
+   {
+    "createShape": {
+     "objectId": "s01_header10",
+     "shapeType": "TEXT_BOX",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 3611880,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 792328,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 518160,
+       "translateY": 2311794,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "insertText": {
+     "objectId": "s01_header10",
+     "insertionIndex": 0,
+     "text": "Leaders who have sat in your seat"
+    }
+   },
+   {
+    "updateTextStyle": {
+     "objectId": "s01_header10",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "fontFamily": "Playfair Display",
+      "weightedFontFamily": {
+       "fontFamily": "Playfair Display",
+       "weight": 400
+      },
+      "fontSize": {
+       "magnitude": 18,
+       "unit": "PT"
+      },
+      "foregroundColor": {
+       "opaqueColor": {
+        "rgbColor": {
+         "red": 0.8313725490196079,
+         "green": 0.7215686274509804,
+         "blue": 0.47843137254901963
+        }
+       }
+      },
+      "bold": false,
+      "italic": false
+     },
+     "fields": "fontFamily,weightedFontFamily,fontSize,foregroundColor,bold,italic"
+    }
+   },
+   {
+    "updateParagraphStyle": {
+     "objectId": "s01_header10",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "lineSpacing": 100,
+      "spaceAbove": {
+       "magnitude": 0,
+       "unit": "PT"
+      },
+      "spaceBelow": {
+       "magnitude": 0,
+       "unit": "PT"
+      }
+     },
+     "fields": "lineSpacing,spaceAbove,spaceBelow"
+    }
+   },
+   {
+    "createShape": {
+     "objectId": "s01_header11",
+     "shapeType": "TEXT_BOX",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 3611880,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 792328,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 4226560,
+       "translateY": 2311794,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "insertText": {
+     "objectId": "s01_header11",
+     "insertionIndex": 0,
+     "text": "Judgement from running the work"
+    }
+   },
+   {
+    "updateTextStyle": {
+     "objectId": "s01_header11",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "fontFamily": "Playfair Display",
+      "weightedFontFamily": {
+       "fontFamily": "Playfair Display",
+       "weight": 400
+      },
+      "fontSize": {
+       "magnitude": 18,
+       "unit": "PT"
+      },
+      "foregroundColor": {
+       "opaqueColor": {
+        "rgbColor": {
+         "red": 0.8313725490196079,
+         "green": 0.7215686274509804,
+         "blue": 0.47843137254901963
+        }
+       }
+      },
+      "bold": false,
+      "italic": false
+     },
+     "fields": "fontFamily,weightedFontFamily,fontSize,foregroundColor,bold,italic"
+    }
+   },
+   {
+    "updateParagraphStyle": {
+     "objectId": "s01_header11",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "lineSpacing": 100,
+      "spaceAbove": {
+       "magnitude": 0,
+       "unit": "PT"
+      },
+      "spaceBelow": {
+       "magnitude": 0,
+       "unit": "PT"
+      }
+     },
+     "fields": "lineSpacing,spaceAbove,spaceBelow"
+    }
+   },
+   {
+    "createShape": {
+     "objectId": "s01_header12",
+     "shapeType": "TEXT_BOX",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 3611880,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 487604,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 7934960,
+       "translateY": 2311794,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "insertText": {
+     "objectId": "s01_header12",
+     "insertionIndex": 0,
+     "text": "Access to the people who decide"
+    }
+   },
+   {
+    "updateTextStyle": {
+     "objectId": "s01_header12",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "fontFamily": "Playfair Display",
+      "weightedFontFamily": {
+       "fontFamily": "Playfair Display",
+       "weight": 400
+      },
+      "fontSize": {
+       "magnitude": 18,
+       "unit": "PT"
+      },
+      "foregroundColor": {
+       "opaqueColor": {
+        "rgbColor": {
+         "red": 0.8313725490196079,
+         "green": 0.7215686274509804,
+         "blue": 0.47843137254901963
+        }
+       }
+      },
+      "bold": false,
+      "italic": false
+     },
+     "fields": "fontFamily,weightedFontFamily,fontSize,foregroundColor,bold,italic"
+    }
+   },
+   {
+    "updateParagraphStyle": {
+     "objectId": "s01_header12",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "lineSpacing": 100,
+      "spaceAbove": {
+       "magnitude": 0,
+       "unit": "PT"
+      },
+      "spaceBelow": {
+       "magnitude": 0,
+       "unit": "PT"
+      }
+     },
+     "fields": "lineSpacing,spaceAbove,spaceBelow"
+    }
+   },
+   {
+    "createShape": {
+     "objectId": "s01_body13",
+     "shapeType": "TEXT_BOX",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 3611880,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 481498,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 518160,
+       "translateY": 3022918,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "insertText": {
+     "objectId": "s01_body13",
+     "insertionIndex": 0,
+     "text": "former ministers and chairs."
+    }
+   },
+   {
+    "updateTextStyle": {
+     "objectId": "s01_body13",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "fontFamily": "Libre Franklin",
+      "weightedFontFamily": {
+       "fontFamily": "Libre Franklin",
+       "weight": 400
+      },
+      "fontSize": {
+       "magnitude": 14,
+       "unit": "PT"
+      },
+      "foregroundColor": {
+       "opaqueColor": {
+        "rgbColor": {
+         "red": 0.7843137254901961,
+         "green": 0.7607843137254902,
+         "blue": 0.7137254901960784
+        }
+       }
+      },
+      "bold": false,
+      "italic": false
+     },
+     "fields": "fontFamily,weightedFontFamily,fontSize,foregroundColor,bold,italic"
+    }
+   },
+   {
+    "updateParagraphStyle": {
+     "objectId": "s01_body13",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "lineSpacing": 115,
+      "spaceAbove": {
+       "magnitude": 0,
+       "unit": "PT"
+      },
+      "spaceBelow": {
+       "magnitude": 4,
+       "unit": "PT"
+      }
+     },
+     "fields": "lineSpacing,spaceAbove,spaceBelow"
+    }
+   },
+   {
+    "createShape": {
+     "objectId": "s01_body14",
+     "shapeType": "TEXT_BOX",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 3611880,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 481498,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 4226560,
+       "translateY": 3022918,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "insertText": {
+     "objectId": "s01_body14",
+     "insertionIndex": 0,
+     "text": "companies built and run."
+    }
+   },
+   {
+    "updateTextStyle": {
+     "objectId": "s01_body14",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "fontFamily": "Libre Franklin",
+      "weightedFontFamily": {
+       "fontFamily": "Libre Franklin",
+       "weight": 400
+      },
+      "fontSize": {
+       "magnitude": 14,
+       "unit": "PT"
+      },
+      "foregroundColor": {
+       "opaqueColor": {
+        "rgbColor": {
+         "red": 0.7843137254901961,
+         "green": 0.7607843137254902,
+         "blue": 0.7137254901960784
+        }
+       }
+      },
+      "bold": false,
+      "italic": false
+     },
+     "fields": "fontFamily,weightedFontFamily,fontSize,foregroundColor,bold,italic"
+    }
+   },
+   {
+    "updateParagraphStyle": {
+     "objectId": "s01_body14",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "lineSpacing": 115,
+      "spaceAbove": {
+       "magnitude": 0,
+       "unit": "PT"
+      },
+      "spaceBelow": {
+       "magnitude": 4,
+       "unit": "PT"
+      }
+     },
+     "fields": "lineSpacing,spaceAbove,spaceBelow"
+    }
+   },
+   {
+    "createShape": {
+     "objectId": "s01_body15",
+     "shapeType": "TEXT_BOX",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 3611880,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 1078733,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 7934960,
+       "translateY": 3022918,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "insertText": {
+     "objectId": "s01_body15",
+     "insertionIndex": 0,
+     "text": "500+ boardroom relationships.\nFirst point\nSecond bold point"
+    }
+   },
+   {
+    "updateTextStyle": {
+     "objectId": "s01_body15",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "fontFamily": "Libre Franklin",
+      "weightedFontFamily": {
+       "fontFamily": "Libre Franklin",
+       "weight": 400
+      },
+      "fontSize": {
+       "magnitude": 14,
+       "unit": "PT"
+      },
+      "foregroundColor": {
+       "opaqueColor": {
+        "rgbColor": {
+         "red": 0.7843137254901961,
+         "green": 0.7607843137254902,
+         "blue": 0.7137254901960784
+        }
+       }
+      },
+      "bold": false,
+      "italic": false
+     },
+     "fields": "fontFamily,weightedFontFamily,fontSize,foregroundColor,bold,italic"
+    }
+   },
+   {
+    "updateParagraphStyle": {
+     "objectId": "s01_body15",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "lineSpacing": 115,
+      "spaceAbove": {
+       "magnitude": 0,
+       "unit": "PT"
+      },
+      "spaceBelow": {
+       "magnitude": 4,
+       "unit": "PT"
+      }
+     },
+     "fields": "lineSpacing,spaceAbove,spaceBelow"
+    }
+   },
+   {
+    "createParagraphBullets": {
+     "objectId": "s01_body15",
+     "textRange": {
+      "type": "FIXED_RANGE",
+      "startIndex": 30,
+      "endIndex": 59
+     },
+     "bulletPreset": "BULLET_DISC_CIRCLE_SQUARE"
+    }
+   },
+   {
+    "updateParagraphStyle": {
+     "objectId": "s01_body15",
+     "textRange": {
+      "type": "FIXED_RANGE",
+      "startIndex": 30,
+      "endIndex": 59
+     },
+     "style": {
+      "indentStart": {
+       "magnitude": 12,
+       "unit": "PT"
+      },
+      "indentFirstLine": {
+       "magnitude": 0,
+       "unit": "PT"
+      }
+     },
+     "fields": "indentStart,indentFirstLine"
+    }
+   },
+   {
+    "updateTextStyle": {
+     "objectId": "s01_body15",
+     "textRange": {
+      "type": "FIXED_RANGE",
+      "startIndex": 49,
+      "endIndex": 53
+     },
+     "style": {
+      "bold": true
+     },
+     "fields": "bold"
+    }
+   },
+   {
+    "createShape": {
+     "objectId": "s01_pageno16",
+     "shapeType": "TEXT_BOX",
+     "elementProperties": {
+      "pageObjectId": "s01_slide",
+      "size": {
+       "width": {
+        "magnitude": 690880,
+        "unit": "EMU"
+       },
+       "height": {
+        "magnitude": 306019,
+        "unit": "EMU"
+       }
+      },
+      "transform": {
+       "scaleX": 1,
+       "scaleY": 1,
+       "translateX": 11148060,
+       "translateY": 6423660,
+       "unit": "EMU"
+      }
+     }
+    }
+   },
+   {
+    "insertText": {
+     "objectId": "s01_pageno16",
+     "insertionIndex": 0,
+     "text": "01"
+    }
+   },
+   {
+    "updateTextStyle": {
+     "objectId": "s01_pageno16",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "fontFamily": "Libre Franklin",
+      "weightedFontFamily": {
+       "fontFamily": "Libre Franklin",
+       "weight": 400
+      },
+      "fontSize": {
+       "magnitude": 8,
+       "unit": "PT"
+      },
+      "foregroundColor": {
+       "opaqueColor": {
+        "rgbColor": {
+         "red": 0.42745098039215684,
+         "green": 0.4392156862745098,
+         "blue": 0.4196078431372549
+        }
+       }
+      },
+      "bold": false,
+      "italic": false
+     },
+     "fields": "fontFamily,weightedFontFamily,fontSize,foregroundColor,bold,italic"
+    }
+   },
+   {
+    "updateParagraphStyle": {
+     "objectId": "s01_pageno16",
+     "textRange": {
+      "type": "ALL"
+     },
+     "style": {
+      "lineSpacing": 100,
+      "spaceAbove": {
+       "magnitude": 0,
+       "unit": "PT"
+      },
+      "spaceBelow": {
+       "magnitude": 0,
+       "unit": "PT"
+      }
+     },
+     "fields": "lineSpacing,spaceAbove,spaceBelow"
+    }
+   }
+  ],
+  "boxes": [
+   {
+    "object_id": "s01_section1",
+    "role": "section",
+    "ground": "dark",
+    "x": 40.8,
+    "y": 21.8,
+    "w": 714.4,
+    "h": 13.331999999999999,
+    "text": "Why ACME / People",
+    "lines": 1
+   },
+   {
+    "object_id": "s01_title2",
+    "role": "title",
+    "ground": "dark",
+    "x": 40.8,
+    "y": 57.8,
+    "w": 878.4,
+    "h": 37.324,
+    "text": "ACME helps the owners answer them.",
+    "lines": 1
+   },
+   {
+    "object_id": "s01_lead3",
+    "role": "lead",
+    "ground": "dark",
+    "x": 40.8,
+    "y": 107.124,
+    "w": 878.4,
+    "h": 20.906999999999996,
+    "text": "One coherent programme.",
+    "lines": 1
+   },
+   {
+    "object_id": "s01_number4",
+    "role": "number",
+    "ground": "dark",
+    "x": 40.8,
+    "y": 152.031,
+    "w": 284.4,
+    "h": 14.544,
+    "text": "01",
+    "lines": 1
+   },
+   {
+    "object_id": "s01_number5",
+    "role": "number",
+    "ground": "dark",
+    "x": 332.8,
+    "y": 152.031,
+    "w": 284.4,
+    "h": 14.544,
+    "text": "02",
+    "lines": 1
+   },
+   {
+    "object_id": "s01_number6",
+    "role": "number",
+    "ground": "dark",
+    "x": 624.8,
+    "y": 152.031,
+    "w": 284.4,
+    "h": 14.544,
+    "text": "03",
+    "lines": 1
+   },
+   {
+    "object_id": "s01_header10",
+    "role": "header",
+    "ground": "dark",
+    "x": 40.8,
+    "y": 182.031,
+    "w": 284.4,
+    "h": 47.988,
+    "text": "Leaders who have sat in your seat",
+    "lines": 2
+   },
+   {
+    "object_id": "s01_header11",
+    "role": "header",
+    "ground": "dark",
+    "x": 332.8,
+    "y": 182.031,
+    "w": 284.4,
+    "h": 47.988,
+    "text": "Judgement from running the work",
+    "lines": 2
+   },
+   {
+    "object_id": "s01_header12",
+    "role": "header",
+    "ground": "dark",
+    "x": 624.8,
+    "y": 182.031,
+    "w": 284.4,
+    "h": 23.994,
+    "text": "Access to the people who decide",
+    "lines": 1
+   },
+   {
+    "object_id": "s01_body13",
+    "role": "body",
+    "ground": "dark",
+    "x": 40.8,
+    "y": 238.025,
+    "w": 284.4,
+    "h": 23.513199999999998,
+    "text": "former ministers and chairs.",
+    "lines": 1
+   },
+   {
+    "object_id": "s01_body14",
+    "role": "body",
+    "ground": "dark",
+    "x": 332.8,
+    "y": 238.025,
+    "w": 284.4,
+    "h": 23.513199999999998,
+    "text": "companies built and run.",
+    "lines": 1
+   },
+   {
+    "object_id": "s01_body15",
+    "role": "body",
+    "ground": "dark",
+    "x": 624.8,
+    "y": 238.025,
+    "w": 284.4,
+    "h": 70.5396,
+    "text": "500+ boardroom relationships.\nFirst point\nSecond bold point",
+    "lines": 3
+   },
+   {
+    "object_id": "s01_pageno16",
+    "role": "pageno",
+    "ground": "dark",
+    "x": 877.8,
+    "y": 505.8,
+    "w": 54.4,
+    "h": 9.696,
+    "text": "01",
+    "lines": 1
+   }
+  ],
+  "missing_assets": []
+ }
+]

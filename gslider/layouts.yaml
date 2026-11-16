@@ -1,0 +1,66 @@
+# Geometry and type for a 960x540pt page: the default design system (dark and ivory grounds, Playfair Display + Libre Franklin).
+# Positions are text edges; the compiler sets box x/y = text edge - inset.
+page: {w: 960, h: 540, emu_per_pt: 12700}
+inset: 7.2
+margin: 48
+chrome:
+  logo: {x: 841, y: 22, w: 91, h: 26}
+  pageno: {x: 885, y: 513}
+title: {x: 48, y: 65, w: 864}
+lead_gap: 12            # lead top = title y + title height + gap
+grid:
+  1: {pitch: 864, w: 864}
+  2: {pitch: 463, w: 401}
+  3: {pitch: 292, w: 270}
+  4: {pitch: 220, w: 200}
+cells: {number_to_rule: 21, rule_to_header: 9, header_to_body: 32}
+rows: {pitch_min: 66, num_x: 48, label_x: 97, text_x: 370}
+band: {label_x: 48, text_x: 240, rule_to_label: 18, rule_to_text: 13}
+block_gap: 24
+floor: 495
+grounds: {dark: "#080806", ivory: "#F4F0E7"}
+rule: {weight: 0.75, color: "#C9A96E", alpha: 0.6}
+
+# role: [font, size, ivory colour, dark colour, line spacing %, space after pt]; all weight 400
+styles:
+  title:      ["Playfair Display", 28, "#1A1917", "#F2EFE8", 100, 0]
+  lead:       ["Libre Franklin",   15, "#3A3730", "#D9D5CC", 115, 0]
+  number:     ["Libre Franklin",   12, "#C8A350", "#C8A350", 100, 0]
+  band_label: ["Libre Franklin",   12, "#C8A350", "#C8A350", 100, 0]
+  header:     ["Playfair Display", 18, "#9A7A42", "#D4B87A", 100, 0]
+  body:       ["Libre Franklin",   14, "#3A3730", "#C8C2B6", 115, 4]
+  value:      ["Libre Franklin",   19, "#D4B87A", "#D4B87A", 115, 0]
+  pageno:     ["Libre Franklin",    8, "#6D706B", "#6D706B", 100, 0]
+  # Roles the HTML decks use beyond DESIGN-SYSTEM's table (Task 4).
+  section:    ["Libre Franklin",   11, "#9A7A42", "#C8A350", 100, 0]
+  note:       ["Libre Franklin",   12, "#6D706B", "#A39E93", 115, 0]
+  quote:      ["Playfair Display", 20, "#9A7A42", "#D4B87A", 115, 0]
+  colhead:    ["Libre Franklin",   11, "#9A7A42", "#C8A350", 100, 0]
+  cover_kicker: ["Libre Franklin", 12, "#9A7A42", "#C8A350", 100, 0]
+  cover_title:  ["Playfair Display", 34, "#1A1917", "#F2EFE8", 105, 0]
+  cover_sub:    ["Libre Franklin", 15, "#3A3730", "#D9D5CC", 115, 0]
+  cover_meta:   ["Libre Franklin", 10, "#6D706B", "#A39E93", 115, 0]
+  contact:      ["Libre Franklin", 14, "#1A1917", "#F2EFE8", 130, 0]
+
+# Cover and closing: own display treatment on the dark ground (field blocks stacked in one column).
+# gaps[role] = space above that field; the stack is centred vertically between top and floor.
+cover:   {x: 490, w: 422, top: 80, image: {x: 0, y: 0, w: 451, h: 540},
+          gaps: {kicker: 0, title: 16, sub: 22, meta: 34, contact: 34}}
+closing: {x: 48, w: 600, top: 90,
+          gaps: {kicker: 0, title: 16, sub: 22, meta: 34, contact: 34}}
+# Slide background images: placed full height (right-aligned) or full width (bottom-aligned)
+# behind a ground-coloured shade so text stays legible.
+background: {shade_alpha: 0.78}
+side_image: {x: 600, w: 312}      # image beside a 60% (w60) block group
+table: {gutter: 18, head_to_rule: 6, rule_to_row: 10}
+rows_compact: {pitch_min: 44, pad: 12}   # second try when the 66pt pitch overflows
+row_pad: 20                               # tallest cell + pad, at least rows.pitch_min
+section_pos: [48, 29, 700]   # section label text x, y, width: kicker line level with the logo
+bullet_indent: 12            # bullet paragraphs' indentStart, pt
+min_col: 30                  # narrowest table text column, pt
+min_image_h: 40              # a full-width image needs this much room above the floor, pt
+band_y: 438                  # band rule pinned near the foot like DESIGN-SYSTEM (rule y 438)
+
+# Strings the layout re-creates or drops; not required in the output.
+drop_selectors: [".brand", ".footer .sub", ".wm-top", ".pageno", ".lp-arrow", ".header-bar .wm-top"]
+drop_glyphs: ["←", "→"]   # only when a glyph stands alone

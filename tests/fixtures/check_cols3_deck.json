@@ -1,0 +1,88 @@
+{
+ "title": "Cols3 fixture",
+ "source": "tests/fixtures/cols3.html",
+ "slides": [
+  {
+   "n": 1,
+   "id": "why",
+   "kind": "content",
+   "ground": "dark",
+   "internal": false,
+   "background": null,
+   "blocks": [
+    {
+     "kind": "section",
+     "text": "Why ACME / People"
+    },
+    {
+     "kind": "title",
+     "text": "ACME helps the owners answer them."
+    },
+    {
+     "kind": "lead",
+     "text": "One coherent programme."
+    },
+    {
+     "kind": "cells",
+     "cells": [
+      {
+       "num": "01",
+       "header": "Leaders who have sat in your seat",
+       "body": [
+        "former ministers and chairs."
+       ],
+       "bullets": [],
+       "value": null
+      },
+      {
+       "num": "02",
+       "header": "Judgement from running the work",
+       "body": [
+        "companies built and run."
+       ],
+       "bullets": [],
+       "value": null
+      },
+      {
+       "num": "03",
+       "header": "Access to the people who decide",
+       "body": [
+        "500+ boardroom relationships."
+       ],
+       "bullets": [
+        "First point",
+        "Second bold point"
+       ],
+       "value": null,
+       "bold": [
+        "bold"
+       ]
+      }
+     ]
+    }
+   ],
+   "raw_text": [
+    "Why ACME / People",
+    "ACME",
+    "ACME helps the owners answer them.",
+    "One coherent programme.",
+    "01",
+    "Leaders who have sat in your seat",
+    "former ministers and chairs.",
+    "02",
+    "Judgement from running the work",
+    "companies built and run.",
+    "03",
+    "Access to the people who decide",
+    "500+ boardroom relationships.",
+    "First point",
+    "Second",
+    "bold",
+    "point",
+    "ACME",
+    "Private strategic proposal",
+    "06"
+   ]
+  }
+ ]
+}

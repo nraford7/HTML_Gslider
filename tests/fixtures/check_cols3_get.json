@@ -1,0 +1,1246 @@
+{
+ "presentationId": "1FAKEgsliderCheckFixture000000000000000000000",
+ "pageSize": {
+  "width": {
+   "magnitude": 12192000,
+   "unit": "EMU"
+  },
+  "height": {
+   "magnitude": 6858000,
+   "unit": "EMU"
+  }
+ },
+ "title": "HTML_Gslider test – cols3",
+ "locale": "en",
+ "revisionId": "fixture",
+ "slides": [
+  {
+   "objectId": "s01_slide",
+   "pageType": "SLIDE",
+   "pageElements": [
+    {
+     "objectId": "s01_logo0",
+     "size": {
+      "width": {
+       "magnitude": 1155700,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 330200,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 10680700,
+      "translateY": 279400,
+      "unit": "EMU"
+     },
+     "image": {
+      "contentUrl": "https://lh7-rt.googleusercontent.com/slidesz/AGV_example",
+      "sourceUrl": "https://example.test/logo.png",
+      "imageProperties": {}
+     }
+    },
+    {
+     "objectId": "s01_section1",
+     "size": {
+      "width": {
+       "magnitude": 9072880,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 352196,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 518160,
+      "translateY": 276860,
+      "unit": "EMU"
+     },
+     "shape": {
+      "shapeType": "TEXT_BOX",
+      "shapeProperties": {},
+      "text": {
+       "textElements": [
+        {
+         "endIndex": 18,
+         "paragraphMarker": {
+          "style": {
+           "lineSpacing": 100,
+           "direction": "LEFT_TO_RIGHT",
+           "spaceAbove": {
+            "unit": "PT"
+           },
+           "spaceBelow": {
+            "unit": "PT"
+           }
+          }
+         }
+        },
+        {
+         "endIndex": 18,
+         "textRun": {
+          "content": "Why ACME / People\n",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.7843137254901961,
+              "green": 0.6392156862745098,
+              "blue": 0.3137254901960784
+             }
+            }
+           },
+           "fontFamily": "Libre Franklin",
+           "fontSize": {
+            "magnitude": 11,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Libre Franklin",
+            "weight": 400
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "objectId": "s01_title2",
+     "size": {
+      "width": {
+       "magnitude": 11155680,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 656895,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 518160,
+      "translateY": 734060,
+      "unit": "EMU"
+     },
+     "shape": {
+      "shapeType": "TEXT_BOX",
+      "shapeProperties": {},
+      "text": {
+       "textElements": [
+        {
+         "endIndex": 35,
+         "paragraphMarker": {
+          "style": {
+           "lineSpacing": 100,
+           "direction": "LEFT_TO_RIGHT",
+           "spaceAbove": {
+            "unit": "PT"
+           },
+           "spaceBelow": {
+            "unit": "PT"
+           }
+          }
+         }
+        },
+        {
+         "endIndex": 35,
+         "textRun": {
+          "content": "ACME helps the owners answer them.\n",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.9490196078431372,
+              "green": 0.9372549019607843,
+              "blue": 0.9098039215686274
+             }
+            }
+           },
+           "fontFamily": "Playfair Display",
+           "fontSize": {
+            "magnitude": 28,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Playfair Display",
+            "weight": 400
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "objectId": "s01_lead3",
+     "size": {
+      "width": {
+       "magnitude": 11155680,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 448399,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 518160,
+      "translateY": 1360475,
+      "unit": "EMU"
+     },
+     "shape": {
+      "shapeType": "TEXT_BOX",
+      "shapeProperties": {},
+      "text": {
+       "textElements": [
+        {
+         "endIndex": 24,
+         "paragraphMarker": {
+          "style": {
+           "lineSpacing": 115,
+           "direction": "LEFT_TO_RIGHT",
+           "spaceAbove": {
+            "unit": "PT"
+           },
+           "spaceBelow": {
+            "unit": "PT"
+           }
+          }
+         }
+        },
+        {
+         "endIndex": 24,
+         "textRun": {
+          "content": "One coherent programme.\n",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.8509803921568627,
+              "green": 0.8352941176470589,
+              "blue": 0.8
+             }
+            }
+           },
+           "fontFamily": "Libre Franklin",
+           "fontSize": {
+            "magnitude": 15,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Libre Franklin",
+            "weight": 400
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "objectId": "s01_number4",
+     "size": {
+      "width": {
+       "magnitude": 3611880,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 367589,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 518160,
+      "translateY": 1930794,
+      "unit": "EMU"
+     },
+     "shape": {
+      "shapeType": "TEXT_BOX",
+      "shapeProperties": {},
+      "text": {
+       "textElements": [
+        {
+         "endIndex": 3,
+         "paragraphMarker": {
+          "style": {
+           "lineSpacing": 100,
+           "direction": "LEFT_TO_RIGHT",
+           "spaceAbove": {
+            "unit": "PT"
+           },
+           "spaceBelow": {
+            "unit": "PT"
+           }
+          }
+         }
+        },
+        {
+         "endIndex": 3,
+         "textRun": {
+          "content": "01\n",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.7843137254901961,
+              "green": 0.6392156862745098,
+              "blue": 0.3137254901960784
+             }
+            }
+           },
+           "fontFamily": "Libre Franklin",
+           "fontSize": {
+            "magnitude": 12,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Libre Franklin",
+            "weight": 400
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "objectId": "s01_number5",
+     "size": {
+      "width": {
+       "magnitude": 3611880,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 367589,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 4226560,
+      "translateY": 1930794,
+      "unit": "EMU"
+     },
+     "shape": {
+      "shapeType": "TEXT_BOX",
+      "shapeProperties": {},
+      "text": {
+       "textElements": [
+        {
+         "endIndex": 3,
+         "paragraphMarker": {
+          "style": {
+           "lineSpacing": 100,
+           "direction": "LEFT_TO_RIGHT",
+           "spaceAbove": {
+            "unit": "PT"
+           },
+           "spaceBelow": {
+            "unit": "PT"
+           }
+          }
+         }
+        },
+        {
+         "endIndex": 3,
+         "textRun": {
+          "content": "02\n",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.7843137254901961,
+              "green": 0.6392156862745098,
+              "blue": 0.3137254901960784
+             }
+            }
+           },
+           "fontFamily": "Libre Franklin",
+           "fontSize": {
+            "magnitude": 12,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Libre Franklin",
+            "weight": 400
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "objectId": "s01_number6",
+     "size": {
+      "width": {
+       "magnitude": 3611880,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 367589,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 7934960,
+      "translateY": 1930794,
+      "unit": "EMU"
+     },
+     "shape": {
+      "shapeType": "TEXT_BOX",
+      "shapeProperties": {},
+      "text": {
+       "textElements": [
+        {
+         "endIndex": 3,
+         "paragraphMarker": {
+          "style": {
+           "lineSpacing": 100,
+           "direction": "LEFT_TO_RIGHT",
+           "spaceAbove": {
+            "unit": "PT"
+           },
+           "spaceBelow": {
+            "unit": "PT"
+           }
+          }
+         }
+        },
+        {
+         "endIndex": 3,
+         "textRun": {
+          "content": "03\n",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.7843137254901961,
+              "green": 0.6392156862745098,
+              "blue": 0.3137254901960784
+             }
+            }
+           },
+           "fontFamily": "Libre Franklin",
+           "fontSize": {
+            "magnitude": 12,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Libre Franklin",
+            "weight": 400
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "objectId": "s01_rule7",
+     "size": {
+      "width": {
+       "magnitude": 3429000,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 1,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 609600,
+      "translateY": 2288934,
+      "unit": "EMU"
+     },
+     "line": {
+      "lineCategory": "STRAIGHT",
+      "lineType": "STRAIGHT_LINE",
+      "lineProperties": {}
+     }
+    },
+    {
+     "objectId": "s01_rule8",
+     "size": {
+      "width": {
+       "magnitude": 3429000,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 1,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 4318000,
+      "translateY": 2288934,
+      "unit": "EMU"
+     },
+     "line": {
+      "lineCategory": "STRAIGHT",
+      "lineType": "STRAIGHT_LINE",
+      "lineProperties": {}
+     }
+    },
+    {
+     "objectId": "s01_rule9",
+     "size": {
+      "width": {
+       "magnitude": 3429000,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 1,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 8026400,
+      "translateY": 2288934,
+      "unit": "EMU"
+     },
+     "line": {
+      "lineCategory": "STRAIGHT",
+      "lineType": "STRAIGHT_LINE",
+      "lineProperties": {}
+     }
+    },
+    {
+     "objectId": "s01_header10",
+     "size": {
+      "width": {
+       "magnitude": 3611880,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 792328,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 518160,
+      "translateY": 2311794,
+      "unit": "EMU"
+     },
+     "shape": {
+      "shapeType": "TEXT_BOX",
+      "shapeProperties": {},
+      "text": {
+       "textElements": [
+        {
+         "endIndex": 34,
+         "paragraphMarker": {
+          "style": {
+           "lineSpacing": 100,
+           "direction": "LEFT_TO_RIGHT",
+           "spaceAbove": {
+            "unit": "PT"
+           },
+           "spaceBelow": {
+            "unit": "PT"
+           }
+          }
+         }
+        },
+        {
+         "endIndex": 34,
+         "textRun": {
+          "content": "Leaders who have sat in your seat\n",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.8313725490196079,
+              "green": 0.7215686274509804,
+              "blue": 0.47843137254901963
+             }
+            }
+           },
+           "fontFamily": "Playfair Display",
+           "fontSize": {
+            "magnitude": 18,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Playfair Display",
+            "weight": 400
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "objectId": "s01_header11",
+     "size": {
+      "width": {
+       "magnitude": 3611880,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 792328,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 4226560,
+      "translateY": 2311794,
+      "unit": "EMU"
+     },
+     "shape": {
+      "shapeType": "TEXT_BOX",
+      "shapeProperties": {},
+      "text": {
+       "textElements": [
+        {
+         "endIndex": 32,
+         "paragraphMarker": {
+          "style": {
+           "lineSpacing": 100,
+           "direction": "LEFT_TO_RIGHT",
+           "spaceAbove": {
+            "unit": "PT"
+           },
+           "spaceBelow": {
+            "unit": "PT"
+           }
+          }
+         }
+        },
+        {
+         "endIndex": 32,
+         "textRun": {
+          "content": "Judgement from running the work\n",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.8313725490196079,
+              "green": 0.7215686274509804,
+              "blue": 0.47843137254901963
+             }
+            }
+           },
+           "fontFamily": "Playfair Display",
+           "fontSize": {
+            "magnitude": 18,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Playfair Display",
+            "weight": 400
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "objectId": "s01_header12",
+     "size": {
+      "width": {
+       "magnitude": 3611880,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 487604,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 7934960,
+      "translateY": 2311794,
+      "unit": "EMU"
+     },
+     "shape": {
+      "shapeType": "TEXT_BOX",
+      "shapeProperties": {},
+      "text": {
+       "textElements": [
+        {
+         "endIndex": 32,
+         "paragraphMarker": {
+          "style": {
+           "lineSpacing": 100,
+           "direction": "LEFT_TO_RIGHT",
+           "spaceAbove": {
+            "unit": "PT"
+           },
+           "spaceBelow": {
+            "unit": "PT"
+           }
+          }
+         }
+        },
+        {
+         "endIndex": 32,
+         "textRun": {
+          "content": "Access to the people who decide\n",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.8313725490196079,
+              "green": 0.7215686274509804,
+              "blue": 0.47843137254901963
+             }
+            }
+           },
+           "fontFamily": "Playfair Display",
+           "fontSize": {
+            "magnitude": 18,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Playfair Display",
+            "weight": 400
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "objectId": "s01_body13",
+     "size": {
+      "width": {
+       "magnitude": 3611880,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 481498,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 518160,
+      "translateY": 3022918,
+      "unit": "EMU"
+     },
+     "shape": {
+      "shapeType": "TEXT_BOX",
+      "shapeProperties": {},
+      "text": {
+       "textElements": [
+        {
+         "endIndex": 29,
+         "paragraphMarker": {
+          "style": {
+           "lineSpacing": 115,
+           "direction": "LEFT_TO_RIGHT",
+           "spaceAbove": {
+            "unit": "PT"
+           },
+           "spaceBelow": {
+            "magnitude": 4,
+            "unit": "PT"
+           }
+          }
+         }
+        },
+        {
+         "endIndex": 29,
+         "textRun": {
+          "content": "former ministers and chairs.\n",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.7843137254901961,
+              "green": 0.7607843137254902,
+              "blue": 0.7137254901960784
+             }
+            }
+           },
+           "fontFamily": "Libre Franklin",
+           "fontSize": {
+            "magnitude": 14,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Libre Franklin",
+            "weight": 400
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "objectId": "s01_body14",
+     "size": {
+      "width": {
+       "magnitude": 3611880,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 481498,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 4226560,
+      "translateY": 3022918,
+      "unit": "EMU"
+     },
+     "shape": {
+      "shapeType": "TEXT_BOX",
+      "shapeProperties": {},
+      "text": {
+       "textElements": [
+        {
+         "endIndex": 25,
+         "paragraphMarker": {
+          "style": {
+           "lineSpacing": 115,
+           "direction": "LEFT_TO_RIGHT",
+           "spaceAbove": {
+            "unit": "PT"
+           },
+           "spaceBelow": {
+            "magnitude": 4,
+            "unit": "PT"
+           }
+          }
+         }
+        },
+        {
+         "endIndex": 25,
+         "textRun": {
+          "content": "companies built and run.\n",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.7843137254901961,
+              "green": 0.7607843137254902,
+              "blue": 0.7137254901960784
+             }
+            }
+           },
+           "fontFamily": "Libre Franklin",
+           "fontSize": {
+            "magnitude": 14,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Libre Franklin",
+            "weight": 400
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    },
+    {
+     "objectId": "s01_body15",
+     "size": {
+      "width": {
+       "magnitude": 3611880,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 1078733,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 7934960,
+      "translateY": 3022918,
+      "unit": "EMU"
+     },
+     "shape": {
+      "shapeType": "TEXT_BOX",
+      "shapeProperties": {},
+      "text": {
+       "textElements": [
+        {
+         "endIndex": 30,
+         "paragraphMarker": {
+          "style": {
+           "lineSpacing": 115,
+           "direction": "LEFT_TO_RIGHT",
+           "spaceAbove": {
+            "unit": "PT"
+           },
+           "spaceBelow": {
+            "magnitude": 4,
+            "unit": "PT"
+           }
+          }
+         }
+        },
+        {
+         "endIndex": 30,
+         "textRun": {
+          "content": "500+ boardroom relationships.\n",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.7843137254901961,
+              "green": 0.7607843137254902,
+              "blue": 0.7137254901960784
+             }
+            }
+           },
+           "fontFamily": "Libre Franklin",
+           "fontSize": {
+            "magnitude": 14,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Libre Franklin",
+            "weight": 400
+           }
+          }
+         }
+        },
+        {
+         "endIndex": 42,
+         "paragraphMarker": {
+          "style": {
+           "lineSpacing": 115,
+           "direction": "LEFT_TO_RIGHT",
+           "spaceAbove": {
+            "unit": "PT"
+           },
+           "spaceBelow": {
+            "magnitude": 4,
+            "unit": "PT"
+           },
+           "indentStart": {
+            "magnitude": 12,
+            "unit": "PT"
+           },
+           "indentFirstLine": {
+            "unit": "PT"
+           }
+          },
+          "bullet": {
+           "listId": "kix.list1",
+           "glyph": "●",
+           "bulletStyle": {}
+          }
+         },
+         "startIndex": 30
+        },
+        {
+         "endIndex": 42,
+         "textRun": {
+          "content": "First point\n",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.7843137254901961,
+              "green": 0.7607843137254902,
+              "blue": 0.7137254901960784
+             }
+            }
+           },
+           "fontFamily": "Libre Franklin",
+           "fontSize": {
+            "magnitude": 14,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Libre Franklin",
+            "weight": 400
+           }
+          }
+         },
+         "startIndex": 30
+        },
+        {
+         "endIndex": 60,
+         "paragraphMarker": {
+          "style": {
+           "lineSpacing": 115,
+           "direction": "LEFT_TO_RIGHT",
+           "spaceAbove": {
+            "unit": "PT"
+           },
+           "spaceBelow": {
+            "magnitude": 4,
+            "unit": "PT"
+           },
+           "indentStart": {
+            "magnitude": 12,
+            "unit": "PT"
+           },
+           "indentFirstLine": {
+            "unit": "PT"
+           }
+          },
+          "bullet": {
+           "listId": "kix.list1",
+           "glyph": "●",
+           "bulletStyle": {}
+          }
+         },
+         "startIndex": 42
+        },
+        {
+         "endIndex": 49,
+         "textRun": {
+          "content": "Second ",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.7843137254901961,
+              "green": 0.7607843137254902,
+              "blue": 0.7137254901960784
+             }
+            }
+           },
+           "fontFamily": "Libre Franklin",
+           "fontSize": {
+            "magnitude": 14,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Libre Franklin",
+            "weight": 400
+           }
+          }
+         },
+         "startIndex": 42
+        },
+        {
+         "endIndex": 53,
+         "textRun": {
+          "content": "bold",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.7843137254901961,
+              "green": 0.7607843137254902,
+              "blue": 0.7137254901960784
+             }
+            }
+           },
+           "fontFamily": "Libre Franklin",
+           "fontSize": {
+            "magnitude": 14,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Libre Franklin",
+            "weight": 700
+           },
+           "bold": true
+          }
+         },
+         "startIndex": 49
+        },
+        {
+         "endIndex": 60,
+         "textRun": {
+          "content": " point\n",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.7843137254901961,
+              "green": 0.7607843137254902,
+              "blue": 0.7137254901960784
+             }
+            }
+           },
+           "fontFamily": "Libre Franklin",
+           "fontSize": {
+            "magnitude": 14,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Libre Franklin",
+            "weight": 400
+           }
+          }
+         },
+         "startIndex": 53
+        }
+       ]
+      }
+     }
+    },
+    {
+     "objectId": "s01_pageno16",
+     "size": {
+      "width": {
+       "magnitude": 690880,
+       "unit": "EMU"
+      },
+      "height": {
+       "magnitude": 306019,
+       "unit": "EMU"
+      }
+     },
+     "transform": {
+      "scaleX": 1,
+      "scaleY": 1,
+      "translateX": 11148060,
+      "translateY": 6423660,
+      "unit": "EMU"
+     },
+     "shape": {
+      "shapeType": "TEXT_BOX",
+      "shapeProperties": {},
+      "text": {
+       "textElements": [
+        {
+         "endIndex": 3,
+         "paragraphMarker": {
+          "style": {
+           "lineSpacing": 100,
+           "direction": "LEFT_TO_RIGHT",
+           "spaceAbove": {
+            "unit": "PT"
+           },
+           "spaceBelow": {
+            "unit": "PT"
+           }
+          }
+         }
+        },
+        {
+         "endIndex": 3,
+         "textRun": {
+          "content": "01\n",
+          "style": {
+           "foregroundColor": {
+            "opaqueColor": {
+             "rgbColor": {
+              "red": 0.42745098039215684,
+              "green": 0.4392156862745098,
+              "blue": 0.4196078431372549
+             }
+            }
+           },
+           "fontFamily": "Libre Franklin",
+           "fontSize": {
+            "magnitude": 8,
+            "unit": "PT"
+           },
+           "weightedFontFamily": {
+            "fontFamily": "Libre Franklin",
+            "weight": 400
+           }
+          }
+         }
+        }
+       ]
+      }
+     }
+    }
+   ],
+   "slideProperties": {
+    "layoutObjectId": "p2",
+    "masterObjectId": "p1",
+    "notesPage": {
+     "objectId": "s01_slide_np",
+     "pageType": "NOTES",
+     "pageElements": [
+      {
+       "objectId": "s01_slide_notes",
+       "size": {
+        "width": {
+         "magnitude": 7315200,
+         "unit": "EMU"
+        },
+        "height": {
+         "magnitude": 4114800,
+         "unit": "EMU"
+        }
+       },
+       "transform": {
+        "scaleX": 1,
+        "scaleY": 1,
+        "translateX": 914400,
+        "translateY": 4343400,
+        "unit": "EMU"
+       },
+       "shape": {
+        "shapeType": "TEXT_BOX",
+        "placeholder": {
+         "type": "BODY",
+         "index": 1,
+         "parentObjectId": "p1_i1"
+        }
+       }
+      }
+     ],
+     "notesProperties": {
+      "speakerNotesObjectId": "s01_slide_notes"
+     }
+    }
+   },
+   "pageProperties": {
+    "pageBackgroundFill": {
+     "solidFill": {
+      "color": {
+       "rgbColor": {
+        "red": 0.03137254901960784,
+        "green": 0.03137254901960784,
+        "blue": 0.023529411764705882
+       }
+      },
+      "alpha": 1
+     }
+    }
+   }
+  }
+ ]
+}

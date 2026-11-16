@@ -1,0 +1,598 @@
+"""Check a built deck (spec section 3, Check): coverage, overflow, style audit,
+contact sheet and report.md.
+
+check(pid, deck, plans, out_dir) reads the live deck once (`gws.get`), fetches one
+LARGE thumbnail per slide, and writes into out_dir:
+  thumbs/sNN.png   the thumbnails
+  contact.png      4 per row, 400x225 each
+  report.md        URL, slide table, coverage misses, style violations, shared assets
+
+Coverage: every `raw_text` string of a slide, less the strings the layout drops on
+purpose (the slide's `dropped_text` when parse provides it, else the
+layouts.yaml drop selectors applied to the source HTML; lone arrow glyphs always),
+must be found in the built slide's text, both sides through `parse.norm`. Strings
+are matched longest first, one shape (or the speaker notes) at a time, and each
+match is consumed, so a string the source has twice must be built twice; strings
+of 3 characters or fewer must match as whole words. A string found in no single
+shape is looked for across the remaining text joined (one string split over boxes).
+Live slides that no plan names, and planned slides missing from the deck, fail.
+A build.json whose status is not "done" fails.
+
+Overflow: each plan box is re-measured with the fonts it was built with
+(est_h). est_h > box h flags it. est_h >= 90% of box h sends it to the thumbnail, except a one-line box
+(h <= 1.2 line heights) whose line fills less than 90% of the wrap width:
+ink (luminance differs from the ground by > 60) in the band just below the
+box's text area, inside its x span and clear of other elements, flags it.
+
+Style audit: from the live deck, each text run gives a combo (font, size, colour,
+line spacing, space below); role is the objectId less `sNN_` and its trailing
+digits, ground is the ground the slide was built on. More than one combo per
+(role, ground), or a combo that differs from layouts.yaml, is a violation.
+"""
+from __future__ import annotations
+
+import json
+import re
+import sys
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from PIL import Image, ImageDraw
+
+from gslider import gws
+from gslider.fonts import INSET_PT, WRAP_SLACK, line_height, measure, text_width
+from gslider.layout import Layout, load_layout
+from gslider.parse import norm
+
+EMU_PER_PT = 12700
+ROLE_RE = re.compile(r"^s\d{2,}_(.+?)\d+$")
+FULL = 0.9           # boxes at least this full get the pixel check
+EST_TOL = 0.5        # pt: estimate above box h by more than this is overflow on its own
+INK_DELTA = 60       # luminance difference from the ground that counts as ink
+INK_MIN_PX = 4       # ink pixels needed in the scan band
+BAND_PAD = 2.0       # pt between the text-area bottom and the scan band
+THUMB = (400, 225)
+PER_ROW = 4
+GUTTER = 8
+
+
+@dataclass
+class CheckResult:
+    coverage_missing: dict = field(default_factory=dict)   # n -> [strings]
+    overflow: list = field(default_factory=list)            # (n, object_id, est_h, box_h)
+    style_violations: list = field(default_factory=list)    # str
+    contact: Path | None = None
+    report: Path | None = None
+    ok: bool = False
+    unconfirmed: list = field(default_factory=list)         # (n, object_id, why) boxes the pixel scan could not see
+    dropped: dict = field(default_factory=dict)             # n -> [strings] not required by design
+    notes: list = field(default_factory=list)               # caveats for the report
+    extra_slides: list = field(default_factory=list)        # live slide ids no plan names
+    missing_slides: list = field(default_factory=list)      # planned slide ids not in the deck
+    build_status: str | None = None                         # build.json status (None: no build.json)
+
+
+def _log(msg: str) -> None:
+    print(msg, file=sys.stderr, flush=True)
+
+
+# ------------------------------------------------------------------ live text
+
+def role_of(object_id: str) -> str | None:
+    m = ROLE_RE.match(object_id or "")
+    return m.group(1) if m else None
+
+
+def _runs(shape: dict) -> list[dict]:
+    """[{content, style, para}] for every text run; para = the paragraph style it sits in."""
+    out, para = [], {}
+    for el in ((shape.get("text") or {}).get("textElements") or []):
+        if "paragraphMarker" in el:
+            para = el["paragraphMarker"].get("style") or {}
+        elif "textRun" in el:
+            out.append({"content": el["textRun"].get("content", ""),
+                        "style": el["textRun"].get("style") or {}, "para": para})
+    return out
+
+
+def shape_text(shape: dict) -> str:
+    return "".join(r["content"] for r in _runs(shape))
+
+
+def _text_elements(elements: list[dict]):
+    """(objectId, shape) for every shape with text, groups flattened."""
+    for el in elements or []:
+        if "elementGroup" in el:
+            yield from _text_elements(el["elementGroup"].get("children"))
+        elif "shape" in el and (el["shape"].get("text") or {}).get("textElements"):
+            yield el.get("objectId", ""), el["shape"]
+
+
+def slide_texts(presentation: dict) -> dict[str, dict]:
+    """slide objectId -> {"shapes": {objectId: text}, "notes": text}."""
+    out = {}
+    for sl in presentation.get("slides") or []:
+        notes = ((sl.get("slideProperties") or {}).get("notesPage") or {}).get("pageElements")
+        out[sl.get("objectId")] = {
+            "shapes": {oid: shape_text(sh) for oid, sh in _text_elements(sl.get("pageElements"))},
+            "notes": "\n".join(shape_text(sh) for _, sh in _text_elements(notes)),
+        }
+    return out
+
+
+# ------------------------------------------------------------------ coverage
+
+def _resolve_source(src: str | None) -> Path | None:
+    if not src:
+        return None
+    p = Path(src).expanduser()
+    for cand in (p, Path(__file__).resolve().parents[1] / p):
+        if cand.is_file():
+            return cand
+    return None
+
+
+def _drop_from_html(deck: dict, layout: Layout) -> dict[int, list[str]] | None:
+    """n -> strings under the layouts.yaml drop selectors, read from the source HTML."""
+    path = _resolve_source(deck.get("source"))
+    if path is None:
+        return None
+    from bs4 import BeautifulSoup, Comment
+
+    from gslider.build import wrap_indexes
+
+    html = path.read_text(encoding="utf-8")
+    wraps = BeautifulSoup(html, "html.parser").select(".slide-wrap")
+    include_internal = any(s.get("internal") for s in deck.get("slides", []))
+    index = wrap_indexes(html, include_internal)
+    out = {}
+    for s in deck.get("slides", []):
+        i = s.get("html_index") or index.get(s["n"])
+        if not i or i > len(wraps):
+            continue
+        slide = wraps[i - 1].select_one(".slide") or wraps[i - 1]
+        seen, strings = set(), []
+        for sel in layout.drop_selectors:
+            for el in slide.select(sel):
+                for node in el.find_all(string=True):
+                    if isinstance(node, Comment) or id(node) in seen:
+                        continue
+                    seen.add(id(node))
+                    t = norm(str(node))
+                    if t:
+                        strings.append(t)
+        out[s["n"]] = strings
+    return out
+
+
+def dropped_strings(deck: dict, layout: Layout, notes: list | None = None) -> dict[int, list[str]]:
+    """n -> raw_text strings the build is not required to carry."""
+    from_html = None
+    out = {}
+    for s in deck.get("slides", []):
+        if "dropped_text" in s:
+            drop = [norm(t) for t in s.get("dropped_text") or []]
+        else:
+            if from_html is None:
+                from_html = _drop_from_html(deck, layout) or {}
+                if not from_html and notes is not None:
+                    notes.append("drop selectors not applied: no `dropped_text` in deck.json and the "
+                                 "source HTML was not found")
+            drop = list(from_html.get(s["n"], []))
+        drop += [t for t in s.get("raw_text") or [] if t in layout.drop_glyphs]
+        out[s["n"]] = drop
+    return out
+
+
+def coverage(deck: dict, plans: list, presentation: dict, layout: Layout,
+             notes: list | None = None) -> tuple[dict[int, list[str]], dict[int, list[str]]]:
+    """(missing, dropped): n -> strings absent from the built slide; n -> strings not required."""
+    texts = slide_texts(presentation)
+    slide_id = {p["n"]: p["slide_id"] for p in plans}
+    dropped = dropped_strings(deck, layout, notes)
+    missing = {}
+    for s in deck.get("slides", []):
+        n = s["n"]
+        built = texts.get(slide_id.get(n, f"s{n:02d}_slide"))
+        need = Counter(norm(t) for t in s.get("raw_text") or [] if norm(t))
+        need -= Counter(dropped.get(n, []))
+        if built is None:
+            miss = list(need.elements())
+        else:
+            miss = _match_all(list(need.elements()), [*built["shapes"].values(), built["notes"]])
+        if miss:
+            missing[n] = miss
+    return missing, dropped
+
+
+def _pattern(t: str) -> re.Pattern:
+    """Strings of 3 chars or fewer match as whole words; longer ones as substrings."""
+    esc = re.escape(t)
+    return re.compile(rf"(?<!\w){esc}(?!\w)" if len(t) <= 3 else esc)
+
+
+def _match_all(need: list[str], texts: list[str]) -> list[str]:
+    """Strings of `need` not found in `texts`; each match is consumed (blanked) once used."""
+    pool = [norm(t) for t in texts]
+    miss = []
+    for t in sorted(need, key=len, reverse=True):
+        pat = _pattern(t)
+        for i, text in enumerate(pool):
+            m = pat.search(text)
+            if m:
+                pool[i] = text[:m.start()] + "\x00" + text[m.end():]
+                break
+        else:
+            joined = " ".join(pool)
+            m = pat.search(joined)
+            if m is None:
+                miss.append(t)
+                continue
+            pool = [joined[:m.start()] + "\x00" + joined[m.end():]]
+    order = {t: i for i, t in enumerate(need)}
+    return sorted(miss, key=lambda t: order[t])
+
+
+# ------------------------------------------------------------------ overflow
+
+def _bullet_start(plan: dict, object_id: str) -> int | None:
+    for r in plan.get("requests", []):
+        b = r.get("createParagraphBullets")
+        if b and b.get("objectId") == object_id:
+            return b["textRange"].get("startIndex", 0)
+    return None
+
+
+def _split_u16(text: str, index: int) -> tuple[str, str]:
+    units = 0
+    for i, ch in enumerate(text):
+        if units >= index:
+            return text[:i], text[i:]
+        units += len(ch.encode("utf-16-le")) // 2
+    return text, ""
+
+
+def estimate_h(box: dict, text: str, layout: Layout, bullet_start: int | None = None) -> float:
+    """Text-area height of `text` in `box`, measured the way compile sizes boxes."""
+    st = layout.styles.get(box["role"], {}).get(box.get("ground", "dark"))
+    if st is None:
+        return box["h"]
+    text = text.rstrip("\n")
+    if bullet_start is None:
+        paras, bullets = text.split("\n"), []
+    else:
+        head, tail = _split_u16(text, bullet_start)
+        paras = head.rstrip("\n").split("\n") if head.strip("\n") else []
+        bullets = tail.split("\n") if tail else []
+    lines = 0
+    if paras:
+        lines += measure("\n".join(paras), st["font"], st["size"], box["w"], st["line_spacing"])[0]
+    if bullets:
+        lines += measure("\n".join(bullets), st["font"], st["size"], box["w"] - layout.bullet_indent,
+                         st["line_spacing"])[0]
+    lh = line_height(st["font"], st["size"], st["line_spacing"])
+    return lines * lh + (len(paras) + len(bullets)) * st["space_after"]
+
+
+def _short_single_line(box: dict, text: str, layout: Layout) -> bool:
+    """A one-line box (h <= 1.2 line heights) whose line fills < FULL of the wrap width."""
+    st = layout.styles.get(box["role"], {}).get(box.get("ground", "dark"))
+    if st is None or "\n" in text.strip("\n"):
+        return False
+    if box["h"] > 1.2 * line_height(st["font"], st["size"], st["line_spacing"]) + st["space_after"]:
+        return False
+    avail = (box["w"] - 2 * INSET_PT) / WRAP_SLACK
+    return text_width(text.strip(), st["font"], st["size"]) < FULL * avail
+
+
+def _pt(v) -> float:
+    return (v or 0) / EMU_PER_PT
+
+
+def obstacles(plan: dict, layout: Layout, skip: str) -> list[tuple[float, float, float, float]]:
+    """(x0, y0, x1, y1) in pt of everything drawn on the slide except `skip`.
+
+    Text boxes count by their text area (insets are blank); full-page fallback
+    images are left out (the fallback slide has no boxes to scan)."""
+    boxes = {b["object_id"]: b for b in plan.get("boxes", [])}
+    ins = layout.inset
+    out = []
+    for r in plan.get("requests", []):
+        (kind, body), = r.items()
+        if kind not in ("createShape", "createLine", "createImage") or body.get("objectId") == skip:
+            continue
+        oid = body["objectId"]
+        if oid in boxes:
+            b = boxes[oid]
+            out.append((b["x"] + ins, b["y"] + ins, b["x"] + b["w"] - ins, b["y"] + ins + b["h"]))
+            continue
+        ep = body.get("elementProperties") or {}
+        tr, sz = ep.get("transform") or {}, ep.get("size") or {}
+        x, y = _pt(tr.get("translateX")), _pt(tr.get("translateY"))
+        w = _pt((sz.get("width") or {}).get("magnitude")) * (tr.get("scaleX") or 1)
+        h = _pt((sz.get("height") or {}).get("magnitude")) * (tr.get("scaleY") or 1)
+        if kind == "createLine":
+            out.append((x, y - 1.5, x + w, y + 1.5))
+        else:
+            out.append((x, y, x + w, y + h))
+    return out
+
+
+def scan_band(box: dict, plan: dict, layout: Layout) -> tuple[float, float, float, float] | None:
+    """The clear strip (x0, y0, x1, y1) pt just below the box's text area, or None."""
+    ins = layout.inset
+    st = layout.styles.get(box["role"], {}).get(box.get("ground", "dark"))
+    depth = line_height(st["font"], st["size"], st["line_spacing"]) if st else 14.0
+    x0, x1 = box["x"] + ins, box["x"] + box["w"] - ins
+    y0 = box["y"] + ins + box["h"] + BAND_PAD
+    y1 = min(y0 + depth, layout.page["h"])
+    for ox0, oy0, ox1, oy1 in obstacles(plan, layout, box["object_id"]):
+        if ox1 <= x0 or ox0 >= x1 or oy1 <= y0:
+            continue
+        if oy0 <= y0:
+            return None  # something already sits at the band's top edge
+        y1 = min(y1, oy0 - 1)
+    return (x0, y0, x1, y1) if y1 - y0 >= 2 else None
+
+
+def _lum(rgb) -> float:
+    r, g, b = rgb[:3]
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def ink_below(thumb: Image.Image, band: tuple, ground_hex: str, page_w: float) -> int:
+    """Pixels in band (pt) whose luminance differs from the ground by more than INK_DELTA."""
+    s = thumb.width / page_w
+    h = ground_hex.lstrip("#")
+    g = _lum(tuple(int(h[i:i + 2], 16) for i in (0, 2, 4)))
+    x0, y0, x1, y1 = (round(v * s) for v in band)
+    region = thumb.convert("RGB").crop((x0, y0, max(x1, x0 + 1), max(y1, y0 + 1)))
+    return sum(1 for px in region.getdata() if abs(_lum(px) - g) > INK_DELTA)
+
+
+def overflow(plans: list, layout: Layout, live: dict | None = None,
+             thumbs: dict[int, Path] | None = None) -> tuple[list, list]:
+    """(flags, unconfirmed). flags: (n, object_id, est_h, box_h)."""
+    flags, unconfirmed = [], []
+    for p in plans:
+        if p.get("status") != "native":
+            continue
+        shapes = ((live or {}).get(p["slide_id"]) or {}).get("shapes", {})
+        img = None
+        for box in p.get("boxes", []):
+            oid = box["object_id"]
+            text = shapes.get(oid, box["text"])
+            est = estimate_h(box, text, layout, _bullet_start(p, oid))
+            h = box["h"]
+            if est > h + EST_TOL:
+                flags.append((p["n"], oid, round(est, 1), round(h, 1)))
+                continue
+            if h <= 0 or est < FULL * h:
+                continue
+            if _short_single_line(box, text, layout):
+                continue  # one line well inside its width: Slides will not wrap it
+            path = (thumbs or {}).get(p["n"])
+            if path is None:
+                continue  # no thumbnail (offline): the estimate is all there is
+            band = scan_band(box, p, layout)
+            if band is None:
+                unconfirmed.append((p["n"], oid, "no clear strip below the box"))
+                continue
+            if img is None:
+                img = Image.open(path)
+            ink = ink_below(img, band, layout.grounds[box.get("ground") or p["ground"]], layout.page["w"])
+            if ink >= INK_MIN_PX:
+                flags.append((p["n"], oid, round(est, 1), round(h, 1)))
+    return flags, unconfirmed
+
+
+# ------------------------------------------------------------------ style audit
+
+def _hex(rgb: dict) -> str:
+    return "#" + "".join(f"{round((rgb.get(k) or 0) * 255):02X}" for k in ("red", "green", "blue"))
+
+
+def _combo(run: dict) -> tuple:
+    st, para = run["style"], run["para"]
+    font = st.get("fontFamily") or (st.get("weightedFontFamily") or {}).get("fontFamily")
+    size = (st.get("fontSize") or {}).get("magnitude")
+    rgb = (((st.get("foregroundColor") or {}).get("opaqueColor") or {}).get("rgbColor"))
+    colour = _hex(rgb) if rgb is not None else None
+    below = (para.get("spaceBelow") or {}).get("magnitude", 0)
+    return (font, size, colour, para.get("lineSpacing"), below)
+
+
+def _fmt(c: tuple) -> str:
+    font, size, colour, spacing, below = c
+    return f"{font} {size}pt {colour} {spacing}% +{below}pt"
+
+
+def style_audit(presentation: dict, plans: list, deck: dict, layout: Layout) -> list[str]:
+    ground = {s["n"]: s.get("ground") for s in deck.get("slides", [])}
+    by_slide = {p["slide_id"]: (p["n"], p.get("ground") or ground.get(p["n"])) for p in plans}
+    seen: dict[tuple, dict[tuple, list[str]]] = {}
+    for sl in presentation.get("slides") or []:
+        n, gr = by_slide.get(sl.get("objectId"), (None, None))
+        if n is None:
+            m = re.match(r"^s(\d{2,})_", sl.get("objectId", ""))
+            n = int(m.group(1)) if m else None
+            gr = ground.get(n)
+        for oid, shape in _text_elements(sl.get("pageElements")):
+            role = role_of(oid)
+            if role is None:
+                continue
+            for run in _runs(shape):
+                if not run["content"].strip():
+                    continue
+                seen.setdefault((role, gr), {}).setdefault(_combo(run), []).append(oid)
+    out = []
+    for (role, gr), combos in sorted(seen.items(), key=lambda kv: (kv[0][0], str(kv[0][1]))):
+        want = (layout.styles.get(role) or {}).get(gr)
+        exp = (want["font"], want["size"], want["color"].upper(), want["line_spacing"], want["space_after"]) \
+            if want else None
+        if len(combos) > 1:
+            parts = "; ".join(f"{_fmt(c)} on {', '.join(sorted(set(o))[:4])}" for c, o in combos.items())
+            out.append(f"{role}/{gr}: {len(combos)} combos ({parts})")
+        if exp:
+            for c, o in combos.items():
+                if (c[0], c[1], c[2], c[3], c[4]) != exp:
+                    out.append(f"{role}/{gr}: {_fmt(c)} differs from layouts.yaml {_fmt(exp)} "
+                               f"on {', '.join(sorted(set(o))[:4])}")
+    return out
+
+
+# ------------------------------------------------------------------ thumbnails
+
+def fetch_thumbs(pid: str, page_ids: list[tuple[int, str]], out_dir: Path) -> dict[int, Path]:
+    """n -> LARGE thumbnail PNG (gws backs off on 429). Failures are logged and skipped."""
+    tdir = out_dir / "thumbs"
+    tdir.mkdir(parents=True, exist_ok=True)
+
+    def one(item):
+        n, page_id = item
+        path = tdir / f"s{n:02d}.png"
+        try:
+            gws.thumbnail(pid, page_id, path)
+            Image.open(path).verify()
+            return n, path
+        except Exception as e:  # noqa: BLE001 (one bad slide must not stop the sheet)
+            _log(f"thumbnail slide {n} failed: {e}")
+            return n, None
+
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        return {n: p for n, p in ex.map(one, page_ids) if p is not None}
+
+
+def contact_sheet(thumbs: dict[int, Path], out: Path, total: int | None = None) -> Path:
+    ns = list(range(1, (total or max(thumbs, default=0)) + 1)) or sorted(thumbs)
+    rows = max(1, -(-len(ns) // PER_ROW))
+    W = PER_ROW * THUMB[0] + (PER_ROW + 1) * GUTTER
+    H = rows * THUMB[1] + (rows + 1) * GUTTER
+    sheet = Image.new("RGB", (W, H), (96, 96, 96))
+    draw = ImageDraw.Draw(sheet)
+    for i, n in enumerate(ns):
+        x = GUTTER + (i % PER_ROW) * (THUMB[0] + GUTTER)
+        y = GUTTER + (i // PER_ROW) * (THUMB[1] + GUTTER)
+        if n in thumbs:
+            sheet.paste(Image.open(thumbs[n]).convert("RGB").resize(THUMB, Image.LANCZOS), (x, y))
+        else:
+            draw.rectangle((x, y, x + THUMB[0] - 1, y + THUMB[1] - 1), fill=(160, 40, 40))
+            draw.text((x + 8, y + THUMB[1] // 2), "no thumbnail", fill=(255, 255, 255))
+        by = y + THUMB[1] - 14  # bottom-left: the top-left corner holds the section kicker
+        draw.rectangle((x, by, x + 26, by + 14), fill=(0, 0, 0))
+        draw.text((x + 4, by + 2), f"{n:02d}", fill=(255, 255, 255))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(out)
+    return out
+
+
+# ------------------------------------------------------------------ report
+
+def _shared_assets(meta: dict) -> list[str]:
+    v = meta.get("shared_assets")
+    return [str(x) for x in v] if isinstance(v, list) else []
+
+
+def _cell(s: str) -> str:
+    return (s or "").replace("|", "\\|").replace("\n", " ")
+
+
+def write_report(path: Path, pid: str, deck: dict, plans: list, res: CheckResult, meta: dict) -> Path:
+    url = meta.get("url") or f"https://docs.google.com/presentation/d/{pid}/edit"
+    kinds = {s["n"]: (s.get("kind"), s.get("id")) for s in deck.get("slides", [])}
+    flags: dict[int, list[str]] = {}
+    for n, oid, est, h in res.overflow:
+        flags.setdefault(n, []).append(f"{oid} {est}>{h}pt" if est > h else f"{oid} ink below")
+    native = sum(p["status"] == "native" for p in plans)
+    L = [f"# gslider check: {meta.get('title') or deck.get('title') or pid}", "",
+         f"- URL: {url}",
+         f"- Source: {deck.get('source') or meta.get('source') or 'n/a'}",
+         f"- Slides: {len(plans)}, native {native}, fallback {len(plans) - native}",
+         f"- Build status: {res.build_status or 'no build.json'}",
+         f"- Result: {'PASS' if res.ok else 'FAIL'} (coverage misses {sum(map(len, res.coverage_missing.values()))}, "
+         f"overflow {len(res.overflow)}, style violations {len(res.style_violations)}, "
+         f"extra slides {len(res.extra_slides)}, missing slides {len(res.missing_slides)})",
+         f"- Contact sheet: {res.contact.name if res.contact else 'none'}", "",
+         "## Slides", "", "| n | type | build | reason | overflow |", "|---|---|---|---|---|"]
+    for p in plans:
+        kind, hid = kinds.get(p["n"], (None, None))
+        typ = f"{kind or ''}{f' ({hid})' if hid else ''}"
+        L.append(f"| {p['n']} | {_cell(typ)} | {p['status']} | {_cell(p.get('reason') or '')} | "
+                 f"{_cell('; '.join(flags.get(p['n'], [])))} |")
+    if res.build_status not in (None, "done"):
+        L += ["", "## Build not finished", "",
+              f"build.json status is `{res.build_status}`: {_cell(str(meta.get('error') or 'no error recorded'))}"]
+    if res.extra_slides or res.missing_slides:
+        L += ["", "## Slide count", ""]
+        L += [f"- live slide not in plans.json: `{x}`" for x in res.extra_slides]
+        L += [f"- planned slide missing from the deck: `{x}`" for x in res.missing_slides]
+    L += ["", "## Coverage misses", ""]
+    L += [f"- slide {n}: " + "; ".join(f"`{t}`" for t in miss) for n, miss in sorted(res.coverage_missing.items())] \
+        or ["None."]
+    L += ["", "## Style violations", ""]
+    L += [f"- {v}" for v in res.style_violations] or ["None."]
+    if res.unconfirmed:
+        L += ["", "## Overflow not pixel-checked", "",
+              *[f"- slide {n} {oid}: {why}" for n, oid, why in res.unconfirmed]]
+    fb = [p["n"] for p in plans if p["status"] == "fallback"]
+    if fb:
+        L += ["", "## Fallback slides", "",
+              f"Slides {', '.join(map(str, fb))} are images of the HTML slide, not native Slides objects:",
+              "- They look like the HTML, not like the native slides around them (kicker case, rules, "
+              "page-number position and fonts follow the HTML).",
+              "- Their text is not editable in Slides; it is in each slide's speaker notes.",
+              "- Coverage for them is checked against the speaker notes; overflow is not checked."]
+    drop = sorted({t for v in res.dropped.values() for t in v})
+    L += ["", "## Dropped by design", "", (", ".join(f"`{t}`" for t in drop) if drop else "None.")]
+    shared = _shared_assets(meta)
+    L += ["", "## Shared asset files (anyone with the link can view)", ""]
+    L += [f"- {s}" for s in shared] or ["Not listed in build.json."]
+    if res.notes:
+        L += ["", "## Notes", "", *[f"- {x}" for x in res.notes]]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(L) + "\n", encoding="utf-8")
+    return path
+
+
+# ------------------------------------------------------------------ entry point
+
+def check(pid: str, deck: dict, plans: list, out_dir: Path, *, thumbnails: bool = True,
+          layout: Layout | None = None) -> CheckResult:
+    out_dir = Path(out_dir)
+    layout = layout or load_layout()
+    res = CheckResult()
+    presentation = gws.get(pid)
+    live = slide_texts(presentation)
+
+    res.coverage_missing, res.dropped = coverage(deck, plans, presentation, layout, res.notes)
+    res.style_violations = style_audit(presentation, plans, deck, layout)
+
+    live_ids = [sl.get("objectId") for sl in presentation.get("slides") or []]
+    planned = [p["slide_id"] for p in plans]
+    res.extra_slides = [i for i in live_ids if i not in planned]
+    res.missing_slides = [i for i in planned if i not in live_ids]
+
+    thumbs: dict[int, Path] = {}
+    if thumbnails:
+        ids = {sl.get("objectId") for sl in presentation.get("slides") or []}
+        pages = [(p["n"], p["slide_id"]) for p in plans if p["slide_id"] in ids]
+        thumbs = fetch_thumbs(pid, pages, out_dir)
+        if len(thumbs) < len(plans):
+            res.notes.append(f"{len(plans) - len(thumbs)} slide thumbnail(s) missing; "
+                             "their boxes were checked by estimate only")
+        res.contact = contact_sheet(thumbs, out_dir / "contact.png", len(plans))
+    res.overflow, res.unconfirmed = overflow(plans, layout, live, thumbs)
+
+    meta, has_meta = {}, (out_dir / "build.json").exists()
+    try:
+        meta = json.loads((out_dir / "build.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
+    if has_meta:
+        res.build_status = str(meta.get("status") or "unknown")
+    res.ok = (not res.coverage_missing and not res.overflow and not res.style_violations
+              and not res.extra_slides and not res.missing_slides and res.build_status in (None, "done"))
+    res.report = write_report(out_dir / "report.md", pid, deck, plans, res, meta)
+    return res

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gslider"
+version = "0.1.0"
+description = "Build editable Google Slides decks from HTML slide decks"
+requires-python = ">=3.11"
+dependencies = [
+    "beautifulsoup4",
+    "Pillow",
+    "PyYAML",
+    "python-pptx",
+    "fontTools",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+gslider = "gslider.cli:main"
+
+[tool.setuptools]
+packages = ["gslider"]
+
+[tool.setuptools.package-data]
+gslider = ["layouts.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
