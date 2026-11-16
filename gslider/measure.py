@@ -127,8 +127,7 @@ def prepare_html(html_path: Path, n: int) -> tuple[str, str]:
     script = soup.new_tag("script", id="gslider-measure-js", nonce=nonce)
     script.string = MEASURE_JS.read_text(encoding="utf-8").replace(ID_PLACEHOLDER, out_id)
     (soup.body or soup.html or soup).append(script)  # after sanitising: the only script in the page
-    sanitize.lock_down(soup, nonce)
-    return str(soup), out_id
+    return sanitize.page(soup, nonce), out_id
 
 
 def _plate_background(plate: Path) -> str:

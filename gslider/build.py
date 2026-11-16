@@ -183,6 +183,18 @@ def guard_into(pid: str) -> None:
 
 # --------------------------------------------------------------------- assets
 
+def check_slide_parity(html: str) -> None:
+    """Refuse a deck whose `.slide-wrap` list differs between html.parser (parse, wrap_indexes)
+    and html5lib (what Chrome is given): slide n would be measured or rendered from another slide."""
+    def ids(soup):
+        return [w.get("data-slide-id") for w in soup.select(".slide-wrap")]
+
+    if ids(BeautifulSoup(html, "html.parser")) != ids(sanitize.parse(html)):
+        raise BuildError("the deck's slides are read differently by the two HTML parsers gslider uses "
+                         "(an odd comment such as <!--> or <!--->, or a slide inside <textarea>, <select> "
+                         "or <title>); fix that markup and build again")
+
+
 def wrap_indexes(html: str, include_internal: bool) -> dict[int, int]:
     """Deck slide n -> 1-based `.slide-wrap` index in the HTML (what render_slide_png takes)."""
     out, n = {}, 0
@@ -601,6 +613,7 @@ def build(html_path, title: str, ivory=frozenset(), include_internal: bool = Fal
     _check_page_size(src)  # a stale or wrong base is found before minutes of rendering
 
     html = html_path.read_text(encoding="utf-8")
+    check_slide_parity(html)
     slug = slugify(html_path.stem)
     out_dir = Path(out_dir) if out_dir else OUT / slug
     ivory = set(ivory)

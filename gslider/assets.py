@@ -35,7 +35,6 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-
 from gslider import gws, sanitize
 
 FOLDER_NAME = "HTML_Gslider assets"
@@ -302,7 +301,7 @@ def render_slide_png(html_path: Path, n: int, out: Path) -> Path:
     style = soup.new_tag("style")
     style.string = _render_css(_print_rules(css))
     head.append(style)  # last in head, after the deck's own styles
-    sanitize.lock_down(soup)
+    text = sanitize.page(soup)
 
     work = OUT / "render"
     work.mkdir(parents=True, exist_ok=True)
@@ -311,7 +310,7 @@ def render_slide_png(html_path: Path, n: int, out: Path) -> Path:
     fd, name = tempfile.mkstemp(prefix=f"{html_path.stem}_s{n:02d}_", suffix=".html", dir=work)
     tmp_html = Path(name)  # unique per call: parallel builds of one deck must not share it
     with open(fd, "w", encoding="utf-8") as f:
-        f.write(str(soup))
+        f.write(text)
     profile = Path(tempfile.mkdtemp(prefix="chrome-", dir=work))
     try:
         r = subprocess.run(

@@ -1249,3 +1249,11 @@ def test_build_records_shares_from_parallel_publishing(google, monkeypatch, tmp_
     assert sorted(meta["shared_assets"]) == want and sorted(meta["plates"]) == want
     assert sorted(e["perm"] for e in meta["shared"]) == [f"perm-{f}" for f in want]
     assert meta["images_not_loaded"] == [{"src": "../secret.png", "reason": "outside the HTML file's folder"}]
+
+
+def test_build_refuses_a_deck_the_parsers_split_differently(tmp_path, monkeypatch):
+    page = tmp_path / "d.html"
+    page.write_text('<!--><div class="slide-wrap">A</div>--><div class="slide-wrap">B</div>')
+    with pytest.raises(build.BuildError, match="read differently"):
+        build.check_slide_parity(page.read_text())
+    build.check_slide_parity('<!-- x --><div class="slide-wrap">A</div><div class="slide-wrap">B</div>')

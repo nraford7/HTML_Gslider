@@ -27,17 +27,22 @@ What it does:
 - Other URL attributes (media `src`, `use` to another file, form actions, ...) are removed.
 - CSS escapes that spell a letter or digit (`\\75 rl(`) are decoded first, so they cannot
   hide a `url(`.
-- The deck is parsed with html5lib (the WHATWG parser Chrome implements), so markup cannot
-  hide from the sanitiser behind a construct the two parsers read differently (`<!-->`).
-  Comments, CDATA and processing instructions are removed.
+- The deck is parsed with html5lib (a WHATWG HTML5 parser, much closer to Chrome than
+  html.parser), so `<!-->` and similar cannot hide markup. Comments, CDATA, processing
+  instructions, every `<meta http-equiv>` and the MathML `mglyph` / `malignmark` are removed,
+  and every `<` in style text becomes the CSS escape `\\3c ` (bs4 writes style text raw,
+  and inside SVG or MathML a `<` there would be read back as a tag).
+- Parse and serialise is not always a fixed point, so the output is parsed and sanitised
+  again until it no longer changes (UnsafePage after MAX_ROUNDS).
 
 parse(html) -> BeautifulSoup: the same html5lib parse, for every caller that edits a page
 Chrome will open.
-lock_down(soup, script_nonce=None): puts a Content-Security-Policy `<meta>` first in `<head>`
-(call it last, on the page as written). Loads are limited to `data:` and the two Google
-Fonts hosts, frames and objects to none, scripts to the one carrying script_nonce (none
-when not given). The second layer: if anything gets past the sanitiser, Chrome still loads
-nothing from disk or the network.
+page(soup, script_nonce=None) -> str: the final page text. Puts a Content-Security-Policy
+`<meta>` first in `<head>` (call it last): loads only from `data:` and the two Google Fonts
+hosts, no frames or objects, scripts only the one carrying script_nonce (none without it).
+Then reads the text back as Chrome will and raises UnsafePage if it holds any
+`<meta http-equiv>` but the CSP, or any other script. CSP does not cover navigation, so the
+meta check is what stops a redirect to a local file.
 
 CHROME_FLAGS: extra Chrome flags for every run (belt and braces): host names other than
 the two Google Fonts hosts do not resolve.
@@ -62,8 +67,10 @@ BLANK_GIF = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABA
 FONT_CSS_HOST = "fonts.googleapis.com"
 FONT_FILE_HOST = "fonts.gstatic.com"
 MAX_IMPORT_DEPTH = 4
+MAX_ROUNDS = 4
 
-_DROP_TAGS = ("script", "iframe", "frame", "frameset", "object", "embed", "portal", "applet", "base", "noembed")
+_DROP_TAGS = ("script", "iframe", "frame", "frameset", "object", "embed", "portal", "applet", "base", "noembed",
+              "mglyph", "malignmark")
 _URL_ATTRS = ("src", "srcset", "href", "xlink:href", "poster", "data", "background", "lowsrc", "dynsrc",
               "action", "formaction", "manifest", "codebase", "longdesc", "ping", "imagesrcset", "srcdoc",
               "archive", "classid", "profile", "cite", "icon", "attributionsrc")
@@ -269,10 +276,15 @@ def _srcset(value: str, ctx: _Ctx) -> str:
 
 
 def parse(html: str) -> BeautifulSoup:
+    """html5lib parse (see the module notes); use it for every page Chrome will open."""
     return BeautifulSoup(html, "html5lib")
 
 
-def lock_down(soup: BeautifulSoup, script_nonce: str | None = None) -> None:
+class UnsafePage(ValueError):
+    """A page that still holds a redirect or a foreign script after sanitising."""
+
+
+def _lock_down(soup: BeautifulSoup, script_nonce: str | None) -> None:
     scripts = f"'nonce-{script_nonce}'" if script_nonce else "'none'"
     policy = ("default-src 'none'; img-src data:; media-src data:; "
               f"font-src data: https://{FONT_FILE_HOST}; style-src 'unsafe-inline' https://{FONT_CSS_HOST}; "
@@ -287,6 +299,19 @@ def lock_down(soup: BeautifulSoup, script_nonce: str | None = None) -> None:
     head.insert(0, meta)
 
 
+def page(soup: BeautifulSoup, script_nonce: str | None = None) -> str:
+    """The page text for Chrome: CSP first in head, then checked as Chrome will read it."""
+    _lock_down(soup, script_nonce)
+    text = str(soup)
+    back = parse(text)
+    metas = back.find_all("meta", attrs={"http-equiv": True})
+    if [m["http-equiv"] for m in metas] != ["Content-Security-Policy"] or metas[0].parent is not back.head:
+        raise UnsafePage("the page still holds a <meta http-equiv> after sanitising")
+    if any(s.get("nonce") != script_nonce or not script_nonce for s in back.find_all("script")):
+        raise UnsafePage("the page still holds a script after sanitising")
+    return text
+
+
 def _sanitize_soup(soup: BeautifulSoup, ctx: _Ctx) -> None:
     for node in [n for n in soup.descendants  # find_all(string=) skips empty comments (`<!---->`)
                  if isinstance(n, (Comment, CData, ProcessingInstruction, Declaration)) and not isinstance(n, Doctype)]:
@@ -294,7 +319,7 @@ def _sanitize_soup(soup: BeautifulSoup, ctx: _Ctx) -> None:
     for tag in soup.find_all(_DROP_TAGS):
         tag.decompose()
     for tag in soup.find_all("meta"):
-        if (tag.get("http-equiv") or "").strip().lower() == "refresh":
+        if any(a.lower() == "http-equiv" for a in tag.attrs):
             tag.decompose()
     for tag in soup.find_all(["set", "animate"]):
         if (tag.get("attributename") or tag.get("attributeName") or "").lower() in ("href", "xlink:href", "src"):
@@ -320,7 +345,7 @@ def _sanitize_soup(soup: BeautifulSoup, ctx: _Ctx) -> None:
         link.decompose()
 
     for style in soup.find_all("style"):
-        style.string = _css("".join(str(c) for c in style.contents), ctx)
+        style.string = _css("".join(str(c) for c in style.contents), ctx).replace("<", "\\3c ")
 
     for tag in soup.find_all(True):
         name = tag.name.lower()
@@ -373,9 +398,15 @@ def _sanitize_soup(soup: BeautifulSoup, ctx: _Ctx) -> None:
 def safe_html(html: str, base_dir: Path, refused: list | None = None) -> str:
     """The deck with everything Chrome could load from outside base_dir removed or inlined.
     Refused sources are appended to `refused` as {"src", "reason"} (each once)."""
-    soup = parse(html)
-    _sanitize_soup(soup, _Ctx(Path(base_dir), refused))
-    return str(soup)
+    ctx = _Ctx(Path(base_dir), refused)
+    for _ in range(MAX_ROUNDS):
+        soup = parse(html)
+        _sanitize_soup(soup, ctx)
+        out = str(soup)
+        if out == html:
+            return out
+        html = out
+    raise UnsafePage(f"the deck does not settle after {MAX_ROUNDS} sanitising rounds")
 
 
 _cache: dict[str, tuple[tuple, str, list]] = {}

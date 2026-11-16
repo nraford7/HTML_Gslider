@@ -14,6 +14,8 @@ Pass 1 [code:html-style-assets]: 1B/5S/5C/0R · fixed -/- · velocity = (—→1
   Stage 1 (0B/2S/4C) + Stage 2 Fable blind (1B/2S/2C: html style let Chrome read local files and private hosts into the public plate). Live acceptance added: table border opacity 400 (template build stopped at slide 12), html build 307s (>180s), font weights lost. One fix agent for all; security re-review on the fix delta follows.
 Pass 2 [code:html-style-assets]: 1B/0S/1C/0R · fixed 15/15 prior · velocity ↓ (11→2, escalation no) · judge: n/a-medium
   Fable blind security re-review of 33e022e..418f9bf. B: `<!-->` comment hides markup from html.parser but not Chrome (file img/iframe into plate). C: curl font fetch lacks --proto-redir. Escalated to HEAVY. Fix: html5lib parse + comments stripped + CSP meta (nonce'd measure script) on every page Chrome opens.
+Pass 3 [code:html-style-assets]: 1B/3S/3C/0R · fixed 1/1 prior · velocity ↑ (2→7, escalation no) · judge: CONTINUE (open BLOCKER)
+  Stage 1 (1B/3S/3C) ∥ Stage 2 Fable blind (1B, same class). B: svg/math <style> text re-serialised raw becomes a live <meta refresh> to file:// (CSP does not cover navigation). S: parser slide-count parity; only refresh meta removed; no CSP good-content test. Fix 16e9a12+: '<' escaped in style text, sanitise to a fixed point, all meta http-equiv + mglyph/malignmark dropped, sanitize.page() re-reads the final page and refuses any meta http-equiv or foreign script, build refuses parser slide mismatch. Live after 16e9a12: html 136 s, PASS, plates pixel-identical, 17 files private; after pass-3 fix plates re-measured locally: 15/15 identical.
 
 ## Chunks
 - [x] Phase 1: T3 2cb457d, T4 3e7b767, T5 0f350db (merged 7dabccb)

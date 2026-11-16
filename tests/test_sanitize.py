@@ -5,6 +5,7 @@ vectors (file:// img, ../ img, CSS url(file://), svg image href, http://127.0.0.
 and check none of them reaches the plate."""
 import base64
 import http.server
+import re
 import socket
 import threading
 from pathlib import Path
@@ -354,3 +355,83 @@ def test_csp_blocks_local_files_even_unsanitised(folder, tmp_path, monkeypatch):
     img = Image.open(m["plate"]).convert("RGB")
     assert RED not in _area(img, (100, 400, 1200, 700))
     assert [b["runs"][0]["text"] for b in m["blocks"]] == ["Text"]  # our nonce'd script still ran
+
+
+# --- mutation through foreign-content <style> (re-review pass 3) ------------------------
+
+_REDIRECT = "<meta http-equiv='refresh' content='0;url={t}'>"
+_MUTATIONS = (
+    "<math><mtext><table><mglyph><style>" + _REDIRECT,
+    "<svg><style>&lt;/style&gt;" + _REDIRECT.replace("<", "&lt;").replace(">", "&gt;") + "</style></svg>",
+    "<math><style>&lt;/style&gt;&lt;img src='{t}'&gt;</style></math>",
+)
+
+
+@pytest.mark.parametrize("trick", _MUTATIONS)
+def test_output_reparses_to_nothing_live(folder, tmp_path, trick):
+    """What Chrome reads back from safe_html has no redirect, no outside path, and is stable."""
+    t = (tmp_path / "secret" / "t.html").as_uri()
+    out = _clean(f"<div class='slide-wrap'>{trick.format(t=t)}</div>", folder)
+    again = sanitize.parse(out)
+    assert not again.find("meta", attrs={"http-equiv": True})
+    assert not [i for i in again.find_all("img") if "secret" in i.get("src", "")]
+    assert _clean(out, folder) == out  # a fixed point
+
+
+def test_style_text_never_holds_a_less_than(folder):
+    out = _clean("<svg><style>&lt;/style&gt;&lt;b&gt;</style></svg><style>p::after{content:'<'}</style>", folder)
+    bodies = re.findall(r"<style[^>]*>(.*?)</style", out, re.S | re.I)
+    assert bodies and all("<" not in b for b in bodies)
+
+
+def test_every_meta_http_equiv_removed(folder):
+    out = _clean("<head><meta http-equiv='set-cookie' content='a=b'><meta http-equiv='Refresh ' content='0'>"
+                 "<meta charset='utf-8'><meta name='viewport' content='x'></head>", folder)
+    soup = sanitize.parse(out)
+    assert not soup.find("meta", attrs={"http-equiv": True})
+    assert soup.find("meta", attrs={"charset": True}) and soup.find("meta", attrs={"name": "viewport"})
+
+
+def test_page_refuses_a_live_redirect_or_foreign_script():
+    soup = sanitize.parse("<html><head></head><body><p>x</p></body></html>")
+    assert "Content-Security-Policy" in sanitize.page(soup)
+    bad = sanitize.parse("<html><head></head><body><meta http-equiv=refresh content=0></body></html>")
+    with pytest.raises(sanitize.UnsafePage):
+        sanitize.page(bad)
+    bad = sanitize.parse("<html><head></head><body><script>x()</script></body></html>")
+    with pytest.raises(sanitize.UnsafePage):
+        sanitize.page(bad, "abc")
+
+
+@needs_chrome
+@pytest.mark.parametrize("trick", _MUTATIONS[:2])
+def test_mutation_redirect_absent_from_plate_and_render(folder, tmp_path, monkeypatch, trick):
+    t = (tmp_path / "secret" / "t.html").as_uri()
+    page = _red_text_page(folder, tmp_path, trick.format(t=t))
+    m = measure.measure_slide(page, 1, tmp_path / "m")
+    assert RED not in set(Image.open(m["plate"]).convert("RGB").getdata())
+    monkeypatch.setattr(assets, "OUT", tmp_path / "o")
+    png = assets.render_slide_png(page, 1, tmp_path / "r.png")
+    assert RED not in set(Image.open(png).convert("RGB").getdata())
+
+
+@needs_chrome
+def test_csp_keeps_good_content(folder, tmp_path):
+    """data: images and backgrounds, in-page SVG gradients and <use> still draw under the CSP."""
+    blue = "data:image/png;base64," + base64.b64encode((folder / "img" / "ok.png").read_bytes()).decode()
+    pos = "position:absolute;top:400px;width:200px;height:200px"
+    page = folder / "deck.html"
+    page.write_text(f"""<!doctype html><html><head><style>*{{margin:0}}
+.slide-wrap{{width:1920px;height:1080px;position:relative;background:#fff}}</style></head><body>
+<div class="slide-wrap"><p style="position:absolute;left:100px;top:100px;font:40px Georgia">Text</p>
+<img src="{blue}" style="{pos};left:100px">
+<div style="{pos};left:400px;background:url({blue})"></div>
+<svg style="{pos};left:700px" width="200" height="200"><defs><linearGradient id="g">
+<stop offset="0" stop-color="#00ff00"/><stop offset="1" stop-color="#00ff00"/></linearGradient>
+<rect id="r" width="200" height="200"/></defs><use href="#r" fill="url(#g)"/></svg>
+</div></body></html>""")
+    m = measure.measure_slide(page, 1, tmp_path / "m")
+    img = Image.open(m["plate"]).convert("RGB")
+    assert _area(img, (120, 420, 280, 580)) == {BLUE}
+    assert _area(img, (420, 420, 580, 580)) == {BLUE}
+    assert _area(img, (720, 420, 880, 580)) == {GREEN}
