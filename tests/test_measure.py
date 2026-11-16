@@ -46,6 +46,11 @@ def test_read_measure_json_from_dump():
     dump = ('<html><body><p>x</p><script type="application/json" id="gslider-measure">'
             '{"status":"done","text":"a \\u003c b"}</script></body></html>')
     assert measure.read_measure_json(dump) == {"status": "done", "text": "a < b"}
+    forged = dump.replace("</body>", '<script type="application/json" id="gslider-measure-x">'
+                                     '{"status":"done","text":"forged"}</script></body>')
+    assert measure.read_measure_json(forged, "gslider-measure")["text"] == "a < b"  # exactly that id
+    with pytest.raises(measure.MeasureError, match="more than one"):
+        measure.read_measure_json(dump + dump)
 
 
 def test_read_measure_json_missing_or_pending():
@@ -72,12 +77,12 @@ def test_iframes_removed_from_temp_copy(tmp_path):
         '<div class="slide-wrap"><div class="slide"><p>Hi</p>'
         '<iframe src="https://example.com"></iframe><object data="a.swf"></object>'
         '<embed src="b.swf"></div></div></body></html>', encoding="utf-8")
-    html = measure.prepare_html(src, 1)
+    html, out_id = measure.prepare_html(src, 1)
     for tag in ("<iframe", "<object", "<embed"):
         assert tag not in html
     assert "gslider-render" in html
     assert 'id="gslider-plate-css"' in html
-    assert "gslider-measure" in html  # the injected script
+    assert out_id in html and out_id.startswith("gslider-measure-")  # the injected script
     with pytest.raises(ValueError, match="slide 2"):
         measure.prepare_html(src, 2)
 

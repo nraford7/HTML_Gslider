@@ -15,7 +15,8 @@ Downloads (`http`, `https` only):
 - The socket connects to that checked address, not to a second DNS answer. HTTPS keeps the
   hostname for SNI and certificate checks, and the Host header carries the hostname.
 - Redirects: at most 5; each target must be http(s) and passes the same checks.
-- 20 s socket timeout, 120 s for the whole download; at most 50 MB, counted while reading.
+- 20 s socket timeout (less when less of the 120 s for the whole download is left), read
+  one socket read at a time so a slow drip still meets the deadline; at most 50 MB, counted while reading.
 - Proxy settings are ignored (a proxy would make the checked address meaningless).
 - The bytes must start like a PNG, JPEG or GIF; the server's Content-Type is not trusted.
 """
@@ -23,6 +24,7 @@ from __future__ import annotations
 
 import http.client
 import ipaddress
+import os
 import socket
 import ssl
 import time
@@ -64,13 +66,21 @@ def _too_big() -> FetchError:
 # --------------------------------------------------------------------- local files
 
 def _local(path_text: str, base_dir: Path) -> tuple[bytes, str]:
+    data = read_local(path_text, base_dir)
+    return data, _sniff(data)
+
+
+def read_local(path_text: str, base_dir: Path) -> bytes:
+    """Bytes of a local file under the same rules as a local image (inside base_dir after
+    symlinks are resolved, at most MAX_BYTES), with no check of what the bytes are.
+    `path_text` is already percent-decoded. Raises FetchError."""
     try:
         return _read_local(path_text, base_dir)
     except (OSError, ValueError) as e:  # a NUL byte, a permission error, a symlink loop
         raise FetchError(f"{path_text} cannot be read: {e}") from None
 
 
-def _read_local(path_text: str, base_dir: Path) -> tuple[bytes, str]:
+def _read_local(path_text: str, base_dir: Path) -> bytes:
     base = Path(base_dir).resolve()
     target = (base / path_text).resolve()  # an absolute path_text replaces base; symlinks followed
     if not target.is_relative_to(base):
@@ -79,10 +89,15 @@ def _read_local(path_text: str, base_dir: Path) -> tuple[bytes, str]:
         raise FetchError(f"{path_text} not found")
     if not target.is_file():
         raise FetchError(f"{path_text} is not a file")
-    if target.stat().st_size > MAX_BYTES:
+    # O_NOFOLLOW on the resolved path: a symlink swapped in after the check is not followed
+    fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "rb") as f:
+        if os.fstat(f.fileno()).st_size > MAX_BYTES:
+            raise _too_big()
+        data = f.read(MAX_BYTES + 1)
+    if len(data) > MAX_BYTES:
         raise _too_big()
-    data = target.read_bytes()
-    return data, _sniff(data)
+    return data
 
 
 # --------------------------------------------------------------------- addresses
@@ -173,7 +188,7 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         visited = getattr(req, "redirect_dict", {})
         if len(visited) >= MAX_REDIRECTS:
-            raise FetchError(f"too many redirects (more than {MAX_REDIRECTS})")
+            raise FetchError(f"too many redirects (more than {MAX_REDIRECTS}; last HTTP {code})")
         parts = urllib.parse.urlsplit(newurl)
         if parts.scheme.lower() not in ("http", "https"):
             raise FetchError(f"redirect to {parts.scheme or 'a relative'}: URL refused (http and https only)")
@@ -190,6 +205,13 @@ def _opener() -> urllib.request.OpenerDirector:
     return op
 
 
+def _read_timeout(resp, seconds: float) -> None:
+    """Socket timeout for the next read: never longer than the time left for the download."""
+    sock = getattr(getattr(getattr(resp, "fp", None), "raw", None), "_sock", None)
+    if sock is not None:
+        sock.settimeout(max(seconds, 0.001))
+
+
 def _download(url: str) -> tuple[bytes, str]:
     req = urllib.request.Request(url, headers={"User-Agent": "gslider", "Accept": "image/*"})
     start = time.monotonic()
@@ -200,19 +222,23 @@ def _download(url: str) -> tuple[bytes, str]:
                 raise _too_big()
             buf = bytearray()
             while True:
-                chunk = resp.read(CHUNK)
+                left = DEADLINE - (time.monotonic() - start)
+                if left <= 0:
+                    raise FetchError(f"download took longer than {DEADLINE} s")
+                _read_timeout(resp, min(TIMEOUT, left))
+                chunk = resp.read1(CHUNK)  # returns after one socket read: a slow drip cannot hold it
                 if not chunk:
                     break
                 buf += chunk
                 if len(buf) > MAX_BYTES:
                     raise _too_big()
-                if time.monotonic() - start > DEADLINE:
-                    raise FetchError(f"download took longer than {DEADLINE} s")
+            if time.monotonic() - start > DEADLINE:
+                raise FetchError(f"download took longer than {DEADLINE} s")
     except FetchError:
         raise
     except urllib.error.HTTPError as e:
         if e.code in (301, 302, 303, 307, 308):
-            raise FetchError(f"too many redirects (more than {MAX_REDIRECTS})") from None
+            raise FetchError(f"too many redirects (more than {MAX_REDIRECTS}; last HTTP {e.code})") from None
         raise FetchError(f"HTTP {e.code} from {urllib.parse.urlsplit(url).hostname}") from None
     except urllib.error.URLError as e:
         raise FetchError(f"download failed: {e.reason}") from None

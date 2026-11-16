@@ -39,6 +39,12 @@ def rgb(hexstr: str) -> dict:
     return {k: int(h[i:i + 2], 16) / 255 for k, i in (("red", 0), ("green", 2), ("blue", 4))}
 
 
+def _blend(fg: str, bg: str, alpha: float) -> dict:
+    """rgbColor of fg drawn at alpha over bg."""
+    f, g = rgb(fg), rgb(bg)
+    return {k: f[k] * alpha + g[k] * (1 - alpha) for k in f}
+
+
 def u16(s: str) -> int:
     """Slides text indexes count UTF-16 code units."""
     return len(s.encode("utf-16-le")) // 2
@@ -421,10 +427,13 @@ def _table(s: _Slide, b: dict, y: float, pmin: float) -> float:
         "tableRowProperties": {"minRowHeight": {"magnitude": emu(h), "unit": "EMU"}},
         "fields": "minRowHeight"}} for i, h in enumerate(heights)]
     line = {"color": {"rgbColor": rgb(r["color"])}}
+    # Slides accepts table-border alpha 0 or 1 only: the inner rules are opaque, in the rule colour
+    # pre-blended at its alpha over the slide's ground (what a translucent rule would show)
+    inner = {"color": {"rgbColor": _blend(r["color"], L.grounds[s.ground], r["alpha"])}}
     border_fields = "tableBorderFill.solidFill.color,tableBorderFill.solidFill.alpha,weight,dashStyle"
     reqs += [
         {"updateTableBorderProperties": {"objectId": oid, "borderPosition": "ALL", "tableBorderProperties": {
-            "tableBorderFill": {"solidFill": {**line, "alpha": r["alpha"]}},
+            "tableBorderFill": {"solidFill": {**inner, "alpha": 1}},
             "weight": {"magnitude": r["weight"], "unit": "PT"}, "dashStyle": "SOLID"},
             "fields": border_fields}},
         {"updateTableBorderProperties": {"objectId": oid, "borderPosition": "OUTER", "tableBorderProperties": {

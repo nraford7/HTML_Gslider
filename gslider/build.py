@@ -23,6 +23,9 @@ also when the build failed) every file shared for this build loses its `anyone`
 permission (`assets.revoke`). build.json keeps `shared_assets` (ids) and adds
 `shared` [{file, perm}], `revoked` [ids] and `revoke_failed` [{file, error}].
 A failed revoke never fails the build; `gslider unshare-assets` cleans up.
+Assets publish PUBLISH_WORKERS at a time (build.json updates under a lock).
+Every page Chrome opens is `sanitize.safe_deck` of the HTML; the images it refused
+go to build.json `images_not_loaded` [{src, reason}] and the report.
 Two styles. `html` (the default) measures every slide in Chrome (`measure.py`,
 3 at a time) and compiles with `htmlstyle.compile_html_deck`: a text-free plate
 picture per slide (asset `plate:<n>`, file ids also in build.json `plates`) under
@@ -47,6 +50,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import time
 import unicodedata
 import urllib.parse
@@ -55,7 +59,7 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
-from gslider import assets, fetch, gws
+from gslider import assets, fetch, gws, sanitize
 from gslider import measure as M
 from gslider.compile import compile_deck
 from gslider.htmlstyle import compile_html_deck
@@ -71,6 +75,7 @@ PROTECTED_IDS = gws.PROTECTED_IDS  # from config/env; gws refuses writes to thes
 LOCK_NAME = ".gslider.lock"
 PLACEHOLDER = "gslider_clear"  # keeps the deck non-empty while old slides are removed
 STYLES = ("html", "template")
+PUBLISH_WORKERS = 4  # asset renders and uploads at a time
 MEASURE_WORKERS = 3
 
 
@@ -246,40 +251,59 @@ def publish_assets(keys: set[str], deck: dict, html_path: Path, html: str, slug:
     """Publish every asset key compile asked for; keys it cannot resolve are left out.
 
     plates: deck slide n -> plate PNG, for `plate:<n>` keys (html style).
-    on_publish(url, key) runs after each key is published (build records the shared id)."""
+    on_publish(url, key) runs after each key is published (build records the shared id).
+    PUBLISH_WORKERS keys at a time (renders and uploads); on_publish calls are serialised."""
     logos = logo_files()
     images = _images(deck["slides"], {})
     wraps = None
-    urls: dict[str, str] = {}
-    for key in sorted(keys):
-        before = urls.get(key)
+    if any(k.startswith("fallback:") for k in keys) and any(s.get("html_index") is None for s in deck["slides"]):
+        wraps = wrap_indexes(html, include_internal)  # older parse output: derive from the .slide-wrap order
+    lock = threading.Lock()
+
+    def one(key: str) -> tuple[str, str | None]:
+        url = None
         if key in logos:
-            urls[key] = assets.publish_image(logos[key].read_bytes(), "image/png", logos[key].name)
+            url = assets.publish_image(logos[key].read_bytes(), "image/png", logos[key].name)
         elif key.startswith("fallback:"):
             n = int(key.split(":", 1)[1])
             slide = next((s for s in deck["slides"] if s["n"] == n), {})
             idx = slide.get("html_index")
-            if idx is None:  # older parse output: derive from the .slide-wrap order
-                wraps = wraps or wrap_indexes(html, include_internal)
+            if idx is None:
                 idx = wraps[n]
             png = out_dir / "fallback" / f"s{n:02d}.png"
             _log(f"render fallback slide {n} (html slide-wrap {idx})")
             assets.render_slide_png(html_path, idx, png)
-            urls[key] = assets.publish_image(png.read_bytes(), "image/png", f"{slug} slide {n:02d} fallback.png")
+            url = assets.publish_image(png.read_bytes(), "image/png", f"{slug} slide {n:02d} fallback.png")
         elif key.startswith("plate:"):
             n = int(key.split(":", 1)[1])
             png = (plates or {}).get(n)
             if png is None:
-                continue
-            urls[key] = assets.publish_image(Path(png).read_bytes(), "image/png", f"{slug} slide {n:02d} plate.png",
-                                             kind="plate")
+                return key, None
+            url = assets.publish_image(Path(png).read_bytes(), "image/png", f"{slug} slide {n:02d} plate.png",
+                                       kind="plate")
         elif key in images:
             img = images[key]
             ext = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif"}.get(img["mime"], "bin")
-            urls[key] = assets.publish_image(img["data"], img["mime"], f"{key[:16]}.{ext}")
-        if on_publish and urls.get(key) and urls[key] != before:
-            on_publish(urls[key], key)
-    return urls
+            url = assets.publish_image(img["data"], img["mime"], f"{key[:16]}.{ext}")
+        if on_publish and url:
+            with lock:
+                on_publish(url, key)
+        return key, url
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=PUBLISH_WORKERS) as pool:
+        return {k: u for k, u in pool.map(one, sorted(keys)) if u}
+
+
+def _merge_refusals(*lists) -> list[dict]:
+    """Refused sources ({"src", "reason"}) from several lists, each src once, in first-seen order."""
+    out, seen = [], set()
+    for lst in lists:
+        for r in lst:
+            if r.get("src") not in seen:
+                seen.add(r.get("src"))
+                out.append({"src": r.get("src"), "reason": r.get("reason")})
+    return out
 
 
 def _measure_all(html_path: Path, wraps: dict[int, int], workdir: Path,
@@ -615,7 +639,7 @@ def build(html_path, title: str, ivory=frozenset(), include_internal: bool = Fal
 
 def _compile_template(deck: dict, html_path: Path, html: str, slug: str, out_dir: Path, ivory: set[int],
                       include_internal: bool, shared) -> list[dict]:
-    _resolve_linked(deck, html_path.parent)  # html style: Chrome draws linked images into the plate
+    _resolve_linked(deck, html_path.parent)  # template style only: html style inlines images via sanitize.py
     layout = load_layout()
     logos = logo_files()
     plans = compile_deck(deck, layout, {}, ivory, logo=bool(logos))
@@ -651,6 +675,8 @@ def _compile_html(deck: dict, html_path: Path, html: str, slug: str, out_dir: Pa
             idx = wraps.get(sl["n"], sl["n"])
         index[sl["n"]] = idx
     measures = _measure_all(html_path, index, out_dir / "measure")
+    # images the sanitiser refused while measuring; _build moves them to build.json
+    deck["images_not_loaded"] = _merge_refusals(*(m.get("images_not_loaded") or [] for m in measures.values()))
     plans = compile_html_deck(deck, measures, {})
     needed = {k for p in plans for k in p["missing_assets"]}
     plates = {n: Path(m["plate"]) for n, m in measures.items() if m.get("plate")}
@@ -666,17 +692,24 @@ def _build(html_path: Path, html: str, slug: str, out_dir: Path, title: str, ivo
            style: str = "html") -> list[dict]:
     deck = parse(html, include_internal=include_internal, source=str(html_path))
 
-    def shared(url: str, key: str = "") -> None:
+    lock = threading.Lock()
+
+    def shared(url: str, key: str = "") -> None:  # called from publishing threads
         fid = _uc_id(url)
-        changed = _record_shared(meta, fid, _perm_since(fid, progress.get("share_start", 0)))
-        if key.startswith("plate:") and fid not in meta.setdefault("plates", []):
-            meta["plates"].append(fid)
-            changed = True
-        if changed:
-            _write(out_dir / "build.json", meta)
+        with lock:
+            changed = _record_shared(meta, fid, _perm_since(fid, progress.get("share_start", 0)))
+            if key.startswith("plate:") and fid not in meta.setdefault("plates", []):
+                meta["plates"].append(fid)
+                changed = True
+            if changed:
+                _write(out_dir / "build.json", meta)
 
     compile_fn = _compile_html if style == "html" else _compile_template
     plans = compile_fn(deck, html_path, html, slug, out_dir, ivory, include_internal, shared)
+    not_loaded = _merge_refusals(deck.pop("images_not_loaded", None) or [], sanitize.refusals(html_path))
+    if not_loaded:
+        meta["images_not_loaded"] = not_loaded
+        _write(out_dir / "build.json", meta)
     missing = {p["n"]: p["missing_assets"] for p in plans if p["missing_assets"]}
     if missing:
         detail = "; ".join(f"slide {n}: {', '.join(k)}" for n, k in missing.items())

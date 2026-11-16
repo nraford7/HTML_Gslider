@@ -331,3 +331,62 @@ def test_no_proxy_is_used(net, tmp_path, monkeypatch):
     net.routes[("cdn.example.com", "/a.png")] = ok(PNG)
     assert resolve_image("http://cdn.example.com/a.png", tmp_path)[0] == PNG
     assert net.dialled == [("93.184.216.34", 80)]
+
+
+# --- review 2: S3 slow drip, C3 O_NOFOLLOW, C5 redirect status ---------------------------
+
+class _Drip(io.RawIOBase):
+    """Raw stream: the HTTP head at once, then the body one byte per `delay` seconds."""
+
+    def __init__(self, data: bytes, head_len: int, delay: float):
+        self.data, self.pos, self.head_len, self.delay = data, 0, head_len, delay
+
+    def readable(self):
+        return True
+
+    def readinto(self, b):
+        if self.pos >= len(self.data):
+            return 0
+        if self.pos >= self.head_len:
+            import time
+            time.sleep(self.delay)
+        b[0] = self.data[self.pos]
+        self.pos += 1
+        return 1
+
+
+def test_slow_drip_stops_at_the_deadline(net, tmp_path, monkeypatch):
+    import time
+    monkeypatch.setattr(fetch, "DEADLINE", 1)
+    body = PNG + b"\x00" * 200
+    raw = b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n" % len(body) + body
+    head_len = raw.index(b"\r\n\r\n") + 4
+
+    class DripSock(FakeSock):
+        def makefile(self, mode, *a, **k):
+            self.net.requests.append(self.sent)
+            return io.BufferedReader(_Drip(raw, head_len, 0.05), buffer_size=1)
+
+    monkeypatch.setattr(fetch.socket, "create_connection", lambda addr, timeout=None, *a, **k: DripSock(net))
+    net.dns["slow.example.com"] = ["93.184.216.34"]
+    start = time.monotonic()
+    with pytest.raises(FetchError, match="longer than 1 s"):
+        resolve_image("http://slow.example.com/a.png", tmp_path)
+    assert time.monotonic() - start < 3  # resp.read(CHUNK) would wait for all 208 bytes (~10 s)
+
+
+def test_local_read_uses_o_nofollow(tmp_path, monkeypatch):
+    (tmp_path / "a.png").write_bytes(PNG)
+    flags = []
+    real = fetch.os.open
+    monkeypatch.setattr(fetch.os, "open", lambda p, f, *a: flags.append(f) or real(p, f, *a))
+    assert resolve_image("a.png", tmp_path)[0] == PNG
+    assert flags and flags[0] & fetch.os.O_NOFOLLOW
+
+
+def test_too_many_redirects_names_the_status(net, tmp_path):
+    net.dns["r.example.com"] = ["93.184.216.34"]
+    for i in range(7):
+        net.routes[("r.example.com", f"/{i}")] = (301, {"Location": f"/{i + 1}", "Content-Length": "0"}, b"")
+    with pytest.raises(FetchError, match="HTTP 301"):
+        resolve_image("http://r.example.com/0", tmp_path)

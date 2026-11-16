@@ -558,8 +558,12 @@ def test_table_borders_and_fill(layout):
     borders = {r.get("borderPosition", "ALL"): r for r in reqs_of(plan, "updateTableBorderProperties")}
     assert all(r["objectId"] == oid for r in borders.values())
     inner = borders["ALL"]["tableBorderProperties"]
-    assert inner["tableBorderFill"]["solidFill"]["color"]["rgbColor"] == colour(layout.rule["color"])
-    assert inner["tableBorderFill"]["solidFill"]["alpha"] == layout.rule["alpha"]
+    # Slides refuses table-border alpha other than 0 or 1: the rule colour is pre-blended over the ground
+    rule, ground = colour(layout.rule["color"]), colour(layout.grounds[plan["ground"]])
+    a = layout.rule["alpha"]
+    want = {k: rule[k] * a + ground[k] * (1 - a) for k in rule}
+    assert inner["tableBorderFill"]["solidFill"]["color"]["rgbColor"] == pytest.approx(want, abs=1 / 255)
+    assert inner["tableBorderFill"]["solidFill"]["alpha"] == 1
     assert inner["weight"] == {"magnitude": 0.75, "unit": "PT"}
     outer = borders["OUTER"]
     assert outer["tableBorderProperties"]["tableBorderFill"]["solidFill"]["alpha"] == 0
@@ -571,6 +575,8 @@ def test_table_borders_and_fill(layout):
     assert cell["objectId"] == oid and "tableRange" not in cell
     assert cell["tableCellProperties"] == {"tableCellBackgroundFill": {"propertyState": "NOT_RENDERED"}}
     assert cell["fields"] == "tableCellBackgroundFill.propertyState"
+    for r in borders.values():  # every border alpha Slides accepts
+        assert r["tableBorderProperties"]["tableBorderFill"]["solidFill"]["alpha"] in (0, 1)
 
 
 def test_table_bold_ranges_in_cells(layout):

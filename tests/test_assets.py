@@ -229,7 +229,7 @@ def test_share_stores_perm_id(drive, monkeypatch):
     assets.publish_image(PNG, "image/png", "a.png")
     props = drive.files[0]["appProperties"]
     assert props["shared"] == "1" and props["perm"] == "anyoneWithLink"
-    assert assets.SHARE_LOG == [("file1", "anyoneWithLink")]
+    assert assets.SHARE_LOG == [("file1", None), ("file1", "anyoneWithLink")]
 
 
 def test_share_log_written_before_the_mark(drive, monkeypatch):
@@ -242,7 +242,7 @@ def test_share_log_written_before_the_mark(drive, monkeypatch):
     monkeypatch.setattr(gws, "drive_update_props", bad_props)
     with pytest.raises(gws.GwsError):
         assets.publish_image(PNG, "image/png", "a.png")
-    assert assets.SHARE_LOG == [("file1", "anyoneWithLink")]
+    assert assets.SHARE_LOG == [("file1", None), ("file1", "anyoneWithLink")]
 
 
 def test_publish_kind_goes_to_app_properties(drive):
@@ -382,3 +382,52 @@ def test_unshare_assets_without_folder_creates_nothing(monkeypatch):
 
     monkeypatch.setattr(gws, "call", no_call)
     assert assets.unshare_all() == {"files": 0, "revoked": 0, "private": 0, "purged": 0, "failed": []}
+
+
+# --- review 2: S4 log before share, S6 parallel revoke ------------------------------------
+
+def test_share_logged_before_the_call(drive, monkeypatch):
+    """A share that times out may still have been made: it must be in SHARE_LOG to be revoked."""
+    drive.files.append({"id": "f1", "name": "a.png", "appProperties": {"gslider": "1"}})
+    start = len(assets.SHARE_LOG)
+
+    def timeout(fid):
+        assert (fid, None) in assets.SHARE_LOG[start:]  # logged before the call
+        raise TimeoutError("share timed out")
+
+    monkeypatch.setattr(gws, "drive_share_anyone", timeout)
+    with pytest.raises(TimeoutError):
+        assets._share("f1")
+    assert assets.SHARE_LOG[start:] == [("f1", None)]
+
+
+def test_share_log_records_the_permission_after(drive):
+    drive.files.append({"id": "f1", "name": "a.png", "appProperties": {"gslider": "1"}})
+    start = len(assets.SHARE_LOG)
+    assets._share("f1")
+    assert assets.SHARE_LOG[start:] == [("f1", None), ("f1", "anyoneWithLink")]
+
+
+def test_revoke_runs_four_at_a_time(monkeypatch):
+    import threading
+    import time
+    live, peak, lock = [0], [0], threading.Lock()
+
+    def slow(fid, perm=None, props=None):
+        with lock:
+            live[0] += 1
+            peak[0] = max(peak[0], live[0])
+        time.sleep(0.2)
+        with lock:
+            live[0] -= 1
+        if fid == "bad":
+            raise assets.RevokeError("nope")
+        return 1
+
+    monkeypatch.setattr(assets, "_revoke_one", slow)
+    ids = [f"f{i}" for i in range(7)] + ["bad"]
+    t = time.monotonic()
+    revoked, failed = assets.revoke(ids)
+    assert time.monotonic() - t < 0.7  # 8 x 0.2 s one at a time would be 1.6 s
+    assert peak[0] == 4
+    assert revoked == ids[:7] and failed == [{"file": "bad", "error": "nope"}]  # input order kept

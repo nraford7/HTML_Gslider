@@ -3,7 +3,7 @@
  * Injected at the end of <body> in a temp copy of the deck where only one
  * `.slide-wrap.gslider-render` is visible at 1920x1080. It waits for the page
  * and its fonts, measures every text block of that slide, writes the result as
- * JSON into a JSON script element with id gslider-measure, and then
+ * JSON into a JSON script element with a random per-run id, and then
  * tags the measured blocks (data-gslider-hide) and gradient-text elements
  * (data-gslider-gradient) so the plate CSS hides their text for the screenshot.
  *
@@ -14,7 +14,7 @@
   'use strict';
   var out = document.createElement('script');
   out.type = 'application/json';
-  out.id = 'gslider-measure';
+  out.id = '__GSLIDER_OUT_ID__';  // replaced by a random id per run (measure.py)
   out.textContent = '{"status":"pending"}';
   (document.body || document.documentElement).appendChild(out);
 
@@ -277,13 +277,14 @@
         family: fams[0] || 'sans-serif',
         generic: generic(fams),
         size_px: r1(parseFloat(cs.fontSize)),
+        weight: parseInt(cs.fontWeight, 10) || 400,
         bold: parseInt(cs.fontWeight, 10) >= 600,
         italic: cs.fontStyle !== 'normal',
         underline: cs.textDecorationLine.indexOf('underline') >= 0,
         color: hex(col)
       };
       var last = runs[runs.length - 1];
-      if (last && ['family', 'generic', 'size_px', 'bold', 'italic', 'underline', 'color']
+      if (last && ['family', 'generic', 'size_px', 'weight', 'bold', 'italic', 'underline', 'color']
           .every(function (k) { return last[k] === run[k]; })) {
         last.text += run.text;
       } else {

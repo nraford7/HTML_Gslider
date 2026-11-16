@@ -202,3 +202,22 @@ def test_text_the_html_hides_is_dropped_and_listed():
     twice = H.compile_html_deck(_deck(raw=["Brand", "Brand"]), {1: _measure([_block([_run("Brand")])])},
                                 {"plate:1": "u"})[0]
     assert twice["dropped_text"] == ["Brand"]  # drawn once: required once
+
+
+# --- review 2: S7 weights ---------------------------------------------------------------
+
+@pytest.mark.parametrize("weight,sent,bold", [(300, 300, False), (349, 300, False), (350, 400, False),
+                                              (500, 500, False), (600, 600, True), (800, 800, True),
+                                              (950, 900, True), (40, 100, False)])
+def test_weighted_font_family_sent(weight, sent, bold):
+    run = _run("Light", bold=weight >= 600)
+    run["weight"] = weight
+    (style,) = _req(_plan([_block([run])]), "updateTextStyle", "s01_t0")
+    assert style["style"]["weightedFontFamily"] == {"fontFamily": "Libre Franklin", "weight": sent}
+    assert style["style"]["bold"] is bold
+    assert "weightedFontFamily" in style["fields"].split(",")
+
+
+def test_weight_missing_follows_bold():
+    styles = _req(_plan([_block([_run("a "), _run("b", bold=True)])]), "updateTextStyle", "s01_t0")
+    assert [s["style"]["weightedFontFamily"]["weight"] for s in styles] == [400, 700]

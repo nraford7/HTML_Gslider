@@ -194,3 +194,30 @@ def test_live_css_api(font_cache, online):
     ratio = fonts.normal_line_ratio("Inter")
     assert ratio is not None and 1.0 < ratio < 1.6
     assert fonts.text_width("Hello", "Inter", 14) > 0
+
+
+# --- review 2: S2 cache name and download limits ---------------------------------------
+
+@pytest.mark.parametrize("family", ["../../evil", "a/b", "x\x00y", "Inter; rm -rf"])
+def test_font_cache_name_is_safe(font_cache, monkeypatch, family):
+    monkeypatch.setattr(fonts, "google_font_available", lambda f: True)
+    monkeypatch.setattr(fonts, "_css_for", lambda f: (200, INTER_CSS))
+    got = []
+    monkeypatch.setattr(fonts, "_download", lambda url, dest: got.append(dest) or dest.write_bytes(b"\0" * 20_000))
+    p = fonts.font_path(family)
+    assert p.parent == font_cache and all(c.isalnum() or c in "_-" for c in p.stem)
+    assert got[0].parent == font_cache
+
+
+@pytest.mark.parametrize("family", ["", "...", "/ /", "\x00"])
+def test_font_cache_name_empty_refused(font_cache, family):
+    with pytest.raises(fonts.FontUnavailable):
+        fonts.font_path(family)
+
+
+def test_download_has_time_and_size_limits(monkeypatch, tmp_path):
+    seen = []
+    monkeypatch.setattr(fonts.subprocess, "run", lambda cmd, **kw: seen.append(cmd))
+    fonts._download("https://fonts.gstatic.com/x.ttf", tmp_path / "x.part")
+    cmd = seen[0]
+    assert cmd[cmd.index("--max-time") + 1] == "60" and cmd[cmd.index("--max-filesize") + 1] == "20M"

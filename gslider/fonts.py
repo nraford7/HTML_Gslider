@@ -113,14 +113,24 @@ def google_font_available(family: str) -> bool:
 
 
 def _download(url: str, dest: Path) -> None:
-    subprocess.run(["curl", "-sfL", "-o", str(dest), url], check=True)
+    subprocess.run(["curl", "-sfL", "--max-time", "60", "--max-filesize", "20M", "-o", str(dest), url],
+                   check=True)
+
+
+def _cache_name(family: str) -> str:
+    """File stem for a family's cached TTF: only [A-Za-z0-9_-] (the family name comes from the
+    deck's CSS). Raises FontUnavailable when nothing is left."""
+    stem = re.sub(r"[^A-Za-z0-9_-]", "", family)
+    if not stem:
+        raise FontUnavailable(f"font {family!r}: no usable characters for a cache file name")
+    return stem
 
 
 def font_path(family: str) -> Path:
     """TTF for the family (the files Slides renders with), cached once. The two template
     families use pinned variable TTFs; any other family comes from the CSS API (400 face).
     Raises FontUnavailable if Google Fonts does not know the family."""
-    p = CACHE / f"{family.replace(' ', '')}.ttf"
+    p = CACHE / f"{_cache_name(family)}.ttf"
     if p.exists() and p.stat().st_size >= 10_000:
         return p
     url = FONT_URLS.get(family)

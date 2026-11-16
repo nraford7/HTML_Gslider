@@ -95,12 +95,13 @@ One `.slide-wrap` per slide, each drawn at 1920 x 1080 px. In html style that is
 - **html style: letter-spacing is dropped.** Slides has no letter-spacing. Spaced-out labels are set without it, and the report lists each one.
 - **html style: fonts must load.** A slide whose web font does not load in Chrome becomes a picture, with the reason in the report.
 - **template style: one look.** The design uses dark and light backgrounds with Playfair Display and Libre Franklin. To change it, edit `gslider/layouts.yaml`.
-- **Linked images.** In template style, gslider reads each `<img src>` or `url(...)` that is not a data URI before it builds:
+- **Linked images.** Both styles read images only from the HTML file's folder or from public `http`/`https` hosts. gslider reads each `<img src>`, `srcset`, SVG `<image href>`, `poster` or CSS `url(...)` that is not a data URI itself, with these rules:
   - A path (relative, absolute, or `file://`) must be inside the HTML file's folder, after symlinks are followed. A path outside it is refused.
   - An `http` or `https` URL is downloaded: at most 50 MB, 20 seconds without data, at most 5 redirects. Each host, and each redirect target, must resolve only to public addresses. gslider refuses loopback, private, link-local, multicast, reserved and unspecified addresses (also in IPv6 forms such as `::ffff:127.0.0.1`), and connects to the address it checked. Proxy settings are not used.
   - Other schemes (`ftp:`, `//host/...`) are refused.
   - The file must be a PNG, JPEG or GIF, checked by its bytes (not by its name or the server's content type).
-  - If an image cannot be read, only its slide falls back, and the report gives the reason. In html style, Chrome draws linked images into the plate, and gslider does not download them.
+  - Template style: if an image cannot be read, only its slide falls back, and the report gives the reason.
+  - Before Chrome opens the HTML (html-style measuring, fallback pictures, `check` renders), gslider makes a safe copy: it removes the deck's scripts and frames, puts accepted images in as data, leaves refused images out, and loads stylesheets only from the HTML file's folder (fonts also from Google Fonts). The report lists each refused image under "Images not loaded" with the reason.
 - **Not supported:** charts and animation.
 
 ## Safety

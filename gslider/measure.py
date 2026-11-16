@@ -2,9 +2,11 @@
 
 One headless Chrome run per slide opens a temp copy of the deck where only that
 `.slide-wrap` is visible at 1920x1080 (the same isolation CSS as fallback
-renders in `assets.render_slide_png`), with `iframe`, `object` and `embed`
-removed. The injected `measure.js` waits for the page and its fonts, writes the
-text blocks as JSON into `<script id="gslider-measure">`, then tags the measured
+renders in `assets.render_slide_png`). The copy is `sanitize.safe_deck` of the deck:
+the deck's own scripts, frames and anything Chrome could load from outside the HTML
+file's folder are gone (images inlined or refused; refusals in `images_not_loaded`).
+The injected `measure.js` waits for the page and its fonts, writes the
+text blocks as JSON into `<script id="<random per-run id>">`, then tags the measured
 blocks so `PLATE_CSS` makes their text transparent. Chrome runs with both
 `--dump-dom` (Python reads the JSON from the dumped DOM) and `--screenshot` (the
 plate: everything that is not editable text). Text that cannot become a text
@@ -12,15 +14,17 @@ box (rotated, zoomed, clipped, inside SVG) is not hidden: it stays in the plate
 and is listed under `skipped`.
 
 SlideMeasure = {"n", "background": "#rrggbb", "fonts_status", "unloaded": [family],
-                "blocks": [Block], "skipped": [{"text", "reason"}], "plate": Path}
+                "blocks": [Block], "skipped": [{"text", "reason"}], "plate": Path,
+                "images_not_loaded": [{"src", "reason"}]}
 Block = {"x", "y", "w", "h" (px, slide origin), "lines", "align", "line_height_px",
          "letter_spacing_px", "runs": [{"text", "family", "generic", "size_px",
-         "bold", "italic", "underline", "color"}], "transform": text-transform or None}
+         "weight", "bold", "italic", "underline", "color"}], "transform": text-transform or None}
 """
 from __future__ import annotations
 
 import json
 import re
+import secrets
 import shutil
 import subprocess
 import tempfile
@@ -30,10 +34,11 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 from PIL import Image
 
-from gslider import assets
+from gslider import assets, sanitize
 
 MEASURE_JS = Path(__file__).with_name("measure.js")
-OUT_ID = "gslider-measure"
+OUT_ID = "gslider-measure"  # prefix of the per-run output element id
+ID_PLACEHOLDER = "__GSLIDER_OUT_ID__"
 VIRTUAL_TIME_MS = 10000
 CHROME_TIMEOUT_S = 120
 
@@ -68,20 +73,25 @@ PLATE_CSS = """
 }
 """
 
-_JSON_RE = re.compile(
-    r"<script\b[^>]*\bid=\"" + OUT_ID + r"\"[^>]*>(.*?)</script>", re.DOTALL)
 
 
 class MeasureError(RuntimeError):
     """Chrome or the measure script failed for one slide."""
 
 
-def read_measure_json(dump: str) -> dict:
-    """The measure script's JSON from Chrome's `--dump-dom` output."""
-    found = _JSON_RE.findall(dump)
+def new_out_id() -> str:
+    return f"{OUT_ID}-{secrets.token_hex(16)}"
+
+
+def read_measure_json(dump: str, out_id: str = OUT_ID) -> dict:
+    """The measure script's JSON from Chrome's `--dump-dom` output: the one element whose id
+    is exactly out_id (the per-run id given to measure.js)."""
+    found = re.findall(r"<script\b[^>]*\bid=\"" + re.escape(out_id) + r"\"[^>]*>(.*?)</script>", dump, re.DOTALL)
     if not found:
         raise MeasureError("no measure output in the dumped page (script blocked or Chrome failed)")
-    data = json.loads(found[-1])  # the element the script appended last in <body>
+    if len(found) > 1:
+        raise MeasureError("more than one measure output in the dumped page")
+    data = json.loads(found[0])
     status = data.get("status")
     if status == "pending":
         raise MeasureError("measure script still pending when Chrome stopped (page or fonts too slow)")
@@ -90,23 +100,22 @@ def read_measure_json(dump: str) -> dict:
     return data
 
 
-def prepare_html(html_path: Path, n: int) -> str:
-    """Temp-copy HTML for slide n: isolation CSS, plate CSS, measure script; no iframes."""
+def prepare_html(html_path: Path, n: int) -> tuple[str, str]:
+    """(temp-copy HTML for slide n, output element id): the sanitised deck (`sanitize`), then
+    isolation CSS, plate CSS and the measure script with a fresh random output id."""
     html_path = Path(html_path).resolve()
-    soup = BeautifulSoup(html_path.read_text(encoding="utf-8"), "html.parser")
+    safe, _ = sanitize.safe_deck(html_path)
+    soup = BeautifulSoup(safe, "html.parser")
     wraps = soup.select(".slide-wrap")
     if not 1 <= n <= len(wraps):
         raise ValueError(f"slide {n} not in {html_path.name} ({len(wraps)} slides)")
     wraps[n - 1]["class"] = [*wraps[n - 1].get("class", []), "gslider-render"]
-    for tag in soup.find_all(["iframe", "object", "embed"]):
-        tag.decompose()
 
     css = "\n".join(s.get_text() for s in soup.find_all("style"))
     head = soup.head
     if head is None:
         head = soup.new_tag("head")
         (soup.html or soup).insert(0, head)
-    head.insert(0, soup.new_tag("base", href=html_path.parent.as_uri() + "/"))
     render = soup.new_tag("style", id="gslider-render-css")
     render.string = assets._render_css(assets._print_rules(css))
     head.append(render)  # last in head, after the deck's own styles
@@ -114,10 +123,11 @@ def prepare_html(html_path: Path, n: int) -> str:
     plate.string = PLATE_CSS
     head.append(plate)
 
+    out_id = new_out_id()
     script = soup.new_tag("script", id="gslider-measure-js")
-    script.string = MEASURE_JS.read_text(encoding="utf-8")
-    (soup.body or soup.html or soup).append(script)
-    return str(soup)
+    script.string = MEASURE_JS.read_text(encoding="utf-8").replace(ID_PLACEHOLDER, out_id)
+    (soup.body or soup.html or soup).append(script)  # after sanitising: the only script in the page
+    return str(soup), out_id
 
 
 def _plate_background(plate: Path) -> str:
@@ -141,8 +151,9 @@ def measure_slide(html_path: Path, n: int, workdir: Path) -> dict:
 
     fd, name = tempfile.mkstemp(prefix=f"{html_path.stem}_s{n:02d}_", suffix=".html", dir=workdir)
     tmp_html = Path(name)  # unique per call: slides measured in parallel
+    html, out_id = prepare_html(html_path, n)
     with open(fd, "w", encoding="utf-8") as f:
-        f.write(prepare_html(html_path, n))
+        f.write(html)
     profile = Path(tempfile.mkdtemp(prefix="chrome-", dir=workdir))
     try:
         r = subprocess.run(
@@ -150,7 +161,7 @@ def measure_slide(html_path: Path, n: int, workdir: Path) -> dict:
              f"--window-size={assets.SLIDE_W},{assets.SLIDE_H}", "--force-device-scale-factor=1",
              "--hide-scrollbars", f"--virtual-time-budget={VIRTUAL_TIME_MS}",
              f"--user-data-dir={profile}", "--no-first-run", "--no-default-browser-check",
-             tmp_html.as_uri()],
+             *sanitize.CHROME_FLAGS, tmp_html.as_uri()],
             capture_output=True, text=True, timeout=CHROME_TIMEOUT_S)
     finally:
         shutil.rmtree(profile, ignore_errors=True)
@@ -158,7 +169,7 @@ def measure_slide(html_path: Path, n: int, workdir: Path) -> dict:
     if r.returncode or not plate.exists():
         raise MeasureError(f"Chrome measure of slide {n} failed: {r.stderr.strip()[-500:]}")
     try:
-        data = read_measure_json(r.stdout)
+        data = read_measure_json(r.stdout, out_id)
     except MeasureError as exc:
         raise MeasureError(f"slide {n}: {exc}") from exc
 
@@ -170,6 +181,7 @@ def measure_slide(html_path: Path, n: int, workdir: Path) -> dict:
         "blocks": data.get("blocks", []),
         "skipped": data.get("skipped", []),
         "plate": plate,
+        "images_not_loaded": sanitize.refusals(html_path),
     }
 
 

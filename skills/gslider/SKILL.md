@@ -84,7 +84,7 @@ python3 -m gslider.cli build "/abs/path/deck.html" --into <presentationId>
 
 ## Privacy
 
-Images used in a deck (cover art, background images, html-style plates, fallback slide renders) are uploaded to the user's Drive folder "HTML_Gslider assets" and shared "anyone with the link can view", because Slides can only insert images it can fetch. `build.json` lists every shared file id. Say this before building a confidential deck.
+Images used in a deck (cover art, background images, html-style plates, fallback slide renders) are uploaded to the user's Drive folder "HTML_Gslider assets" and shared "anyone with the link can view" while the build runs, because Slides can only insert images it can fetch. The links are removed after each build (also a failed one); `build.json` lists every shared file id and whether its link was removed. For files shared by older versions, or a link that could not be removed, run `gslider unshare-assets`. Say this before building a confidential deck: the files are public by link for the minutes the build runs.
 
 ## Never
 

@@ -560,7 +560,9 @@ def test_check_html_report_sections(tmp_path, monkeypatch, layout):
     monkeypatch.setattr(C.assets, "CHROME", "/fake/chrome")
     monkeypatch.setattr(C.assets, "render_slide_png", fake_render)
     (tmp_path / "build.json").write_text(json.dumps({"pid": PID, "status": "done", "style": "html",
-                                                     "plates": ["1plate"], "shared_assets": ["1plate"]}))
+                                                     "plates": ["1plate"], "shared_assets": ["1plate"],
+                                                     "images_not_loaded": [{"src": "../x.png",
+                                                                            "reason": "outside the folder"}]}))
     res = C.check(PID, deck, plans, tmp_path, layout=layout)
     assert rendered == [1]
     assert res.compare and res.compare.exists() and 1 in res.image_diff
@@ -572,3 +574,4 @@ def test_check_html_report_sections(tmp_path, monkeypatch, layout):
     assert "SIDE NOTE" in rep and "rotate" in rep
     assert "compare.png" in rep
     assert "Style audit skipped" in rep
+    assert "## Images not loaded" in rep and "- `../x.png`: outside the folder" in rep

@@ -789,6 +789,18 @@ def _sharing_report(meta: dict) -> list[str]:
     return L
 
 
+def _images_report(meta: dict) -> list[str]:
+    """Images Chrome was not allowed to load (outside the HTML file's folder, a private
+    address, not an image): build.json `images_not_loaded`."""
+    got = [r for r in (meta.get("images_not_loaded") or []) if isinstance(r, dict)]
+    if not got and "images_not_loaded" not in meta:
+        return []
+    L = ["", "## Images not loaded", "",
+         "Read only from the HTML file's folder or public http(s) hosts; these were left out of the slides.", ""]
+    return L + ([f"- `{_cell(str(r.get('src') or ''))}`: {_cell(str(r.get('reason') or ''))}" for r in got]
+                or ["None."])
+
+
 def _cell(s: str) -> str:
     return (s or "").replace("|", "\\|").replace("\n", " ")
 
@@ -847,6 +859,7 @@ def write_report(path: Path, pid: str, deck: dict, plans: list, res: CheckResult
     else:
         drop = sorted({t for v in res.dropped.values() for t in v})
         L += ["", "## Dropped by design", "", (", ".join(f"`{t}`" for t in drop) if drop else "None.")]
+    L += _images_report(meta)
     L += _sharing_report(meta)
     if res.notes:
         L += ["", "## Notes", "", *[f"- {x}" for x in res.notes]]

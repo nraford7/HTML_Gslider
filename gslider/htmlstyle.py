@@ -14,7 +14,8 @@ the text keeps its place. Box h is the text-area height (height*0.5); the elemen
 h + 14.4 tall (the template-style Box convention).
 
 Text: per run font family (`fonts.slides_family`; a family Google Fonts does not know
-is substituted by its CSS generic and listed), size px*0.5 pt, bold, italic,
+is substituted by its CSS generic and listed) sent as `weightedFontFamily` with the CSS
+weight rounded to the nearest 100 (100-900; `bold` is also set for 600 and up), size px*0.5 pt, italic,
 underline and colour; block alignment; line spacing css_line_height /
 (font size * normal line ratio) * 100, the ratio from the family's hhea metrics
 (1.2 when unknown). `text-transform` is applied to the text. `letter-spacing` has no
@@ -68,6 +69,15 @@ def line_ratio(family: str) -> float:
     if native:
         return SLIDES_NATIVE[native]
     return normal_line_ratio(family) or DEFAULT_RATIO
+
+
+def css_weight(run: dict) -> int:
+    """The run's CSS font weight rounded to the nearest 100 (100-900); 700 or 400 from `bold`
+    when the measure has no weight."""
+    w = run.get("weight")
+    if not isinstance(w, (int, float)) or w <= 0:
+        w = 700 if run.get("bold") else 400
+    return min(900, max(100, int(w / 100 + 0.5) * 100))
 
 
 def ground_of(background: str) -> str:
@@ -191,11 +201,12 @@ class _HtmlSlide:
                 "textRange": {"type": "FIXED_RANGE", "startIndex": u16(text[:start]),
                               "endIndex": u16(text[:start + len(t)])},
                 "style": {"fontFamily": fam,
+                          "weightedFontFamily": {"fontFamily": fam, "weight": css_weight(run)},
                           "fontSize": {"magnitude": round(run["size_px"] * PX, 2), "unit": "PT"},
                           "foregroundColor": {"opaqueColor": {"rgbColor": rgb(run.get("color") or "#000000")}},
-                          "bold": bool(run.get("bold")), "italic": bool(run.get("italic")),
+                          "bold": css_weight(run) >= 600, "italic": bool(run.get("italic")),
                           "underline": bool(run.get("underline"))},
-                "fields": "fontFamily,fontSize,foregroundColor,bold,italic,underline"}})
+                "fields": "fontFamily,weightedFontFamily,fontSize,foregroundColor,bold,italic,underline"}})
             start += len(t)
         _, fam, main = max(families, key=lambda f: f[0])  # the run with the most text sets the spacing
         lh_px = block.get("line_height_px") or main["size_px"] * DEFAULT_RATIO

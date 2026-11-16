@@ -409,6 +409,7 @@ def test_build_json_written_before_publishing_and_grows(google, fake_compile, ht
         return f"https://drive.google.com/uc?export=download&id=F{len(seen)}"
 
     monkeypatch.setattr(build.assets, "publish_image", fake_publish)
+    monkeypatch.setattr(build, "PUBLISH_WORKERS", 1)  # one at a time, so the growth is observable
     with pytest.raises(build.BuildError):  # fake compile keeps reporting assets missing
         build.build(html, "T")
     assert seen == [("building", []), ("building", ["F1"])]
@@ -1183,4 +1184,68 @@ def test_reshare_refuses_files_gslider_did_not_upload(google, monkeypatch):
     done, failed = build.assets.reshare(["Fmine", "Fother", protected])
     assert done == ["Fmine"] and shares == ["Fmine"]
     assert [f["file"] for f in failed] == ["Fother", protected]
-    assert build.assets.SHARE_LOG == [("Fmine", "p")]
+    assert build.assets.SHARE_LOG == [("Fmine", None), ("Fmine", "p")]
+
+
+# --- review 2: S6 parallel publishing, B1 refusals in build.json -------------------------------
+
+def test_publish_assets_runs_four_at_a_time(monkeypatch, tmp_path):
+    import threading
+    import time
+    live, peak, lock, seen = [0], [0], threading.Lock(), []
+
+    def slow_publish(data, mime, name, kind=None):
+        with lock:
+            live[0] += 1
+            peak[0] = max(peak[0], live[0])
+        time.sleep(0.2)
+        with lock:
+            live[0] -= 1
+        return f"https://drive.google.com/uc?export=download&id={name.split()[2]}"
+
+    monkeypatch.setattr(build.assets, "publish_image", slow_publish)
+    plates = {}
+    for n in range(1, 9):
+        plates[n] = tmp_path / f"p{n}.png"
+        plates[n].write_bytes(b"\x89PNG")
+    deck = {"slides": [{"n": n, "blocks": []} for n in plates]}
+    t = time.monotonic()
+    urls = build.publish_assets({f"plate:{n}" for n in plates}, deck, tmp_path / "d.html", "", "deck", tmp_path,
+                                False, on_publish=lambda url, key: seen.append(key), plates=plates)
+    assert time.monotonic() - t < 0.7  # 8 x 0.2 s one at a time would be 1.6 s
+    assert peak[0] == 4
+    assert urls == {f"plate:{n}": f"https://drive.google.com/uc?export=download&id={n:02d}" for n in plates}
+    assert sorted(seen) == sorted(urls)
+
+
+def test_build_records_shares_from_parallel_publishing(google, monkeypatch, tmp_path):
+    import time
+    src = tmp_path / "deck.html"
+    src.write_text("".join('<div class="slide-wrap"><div class="slide"><h1>Heading</h1></div></div>'
+                           for _ in range(6)))
+
+    def fake_measure(html_path, n, workdir):
+        plate = Path(workdir) / f"plate_s{n:02d}.png"
+        plate.parent.mkdir(parents=True, exist_ok=True)
+        plate.write_bytes(b"\x89PNG plate %d" % n)
+        m = _fake_measure(n, plate)
+        m["images_not_loaded"] = [{"src": "../secret.png", "reason": "outside the HTML file's folder"}]
+        return m
+
+    def fake_publish(data, mime, name, kind=None):
+        time.sleep(0.05)
+        fid = "f" + name.split()[2]
+        build.assets.SHARE_LOG.append((fid, "perm-" + fid))
+        return f"https://drive.google.com/uc?export=download&id={fid}"
+
+    monkeypatch.setattr(build.assets, "CHROME", "/fake/chrome")
+    monkeypatch.setattr(build.M, "measure_slide", fake_measure)
+    monkeypatch.setattr(build.assets, "publish_image", fake_publish)
+    monkeypatch.setattr(build.assets, "revoke", lambda ids, perms=None: (list(ids), []))
+    monkeypatch.setattr("gslider.htmlstyle.slides_family", lambda fam, gen: (fam, False))
+    res = build.build(src, "T")
+    meta = json.loads((res.out_dir / "build.json").read_text())
+    want = [f"f{n:02d}" for n in range(1, 7)]
+    assert sorted(meta["shared_assets"]) == want and sorted(meta["plates"]) == want
+    assert sorted(e["perm"] for e in meta["shared"]) == [f"perm-{f}" for f in want]
+    assert meta["images_not_loaded"] == [{"src": "../secret.png", "reason": "outside the HTML file's folder"}]

@@ -6,12 +6,14 @@ a second publish of the same bytes reuses the file and does not upload again.
 A file gets `appProperties.shared = "1"` and `perm = <permission id>` only after
 its `{type: anyone, role: reader}` permission was created; a reused file without
 that mark is shared then (a share that failed, or was revoked, on an earlier run).
-Every share is also appended to SHARE_LOG (before the mark), so a build can revoke
-a share whose mark failed.
+Every share is appended to SHARE_LOG as (id, None) before the share call (a call that
+times out may still have shared the file) and as (id, permission id) after it, so a build
+can revoke a share whose call or mark failed. SHARE_LOG appends and the folder lookup are
+thread-safe; publish_image takes a lock per SHA-256, so parallel publishes still dedupe.
 
 reshare(ids) shares gslider files again (build.py, before retrying a slide whose image
 Slides could not fetch). revoke(ids) removes the `anyone` permissions again (build.py calls it after every
-build, also a failed one). It marks the file `shared = "0"` first and only then
+build, also a failed one; REVOKE_WORKERS files at a time). It marks the file `shared = "0"` first and only then
 deletes the permission, so a later build re-shares a file whose delete failed.
 It touches only files that carry `gslider = "1"` and are not protected.
 unshare_all() does the same for every gslider file in the assets folder.
@@ -29,11 +31,13 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from bs4 import BeautifulSoup
 
-from gslider import gws
+from gslider import gws, sanitize
 
 FOLDER_NAME = "HTML_Gslider assets"
 FOLDER_MIME = "application/vnd.google-apps.folder"
@@ -45,6 +49,9 @@ SLIDE_W, SLIDE_H = 1920, 1080
 _EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif"}
 _folder_id: str | None = None
 SHARE_LOG: list[tuple[str, str | None]] = []  # (file id, permission id) for every share made by this process
+REVOKE_WORKERS = 4
+_lock = threading.Lock()  # SHARE_LOG appends and the folder lookup
+_sha_locks: dict[str, threading.Lock] = {}
 
 
 def find_chrome() -> str | None:
@@ -78,21 +85,28 @@ def find_folder() -> str | None:
 def ensure_folder() -> str:
     """Id of the Drive folder `HTML_Gslider assets`, found by name or created."""
     global _folder_id
-    if _folder_id:
+    with _lock:  # parallel publishes must not create two folders
+        if _folder_id:
+            return _folder_id
+        _folder_id = find_folder() or gws.created_id(
+            gws.call("drive", "files", "create", "--json", gws._j({"name": FOLDER_NAME, "mimeType": FOLDER_MIME})),
+            "folder create")
         return _folder_id
-    _folder_id = find_folder() or gws.created_id(
-        gws.call("drive", "files", "create", "--json", gws._j({"name": FOLDER_NAME, "mimeType": FOLDER_MIME})),
-        "folder create")
-    return _folder_id
 
 
 class RevokeError(Exception):
     pass
 
 
+def _log_share(file_id: str, perm: str | None) -> None:
+    with _lock:
+        SHARE_LOG.append((file_id, perm))
+
+
 def _share(file_id: str) -> None:
+    _log_share(file_id, None)  # before the call: a share that times out may still have been made
     perm = gws.drive_share_anyone(file_id)
-    SHARE_LOG.append((file_id, perm))  # before the mark: a build revokes this share even if the mark fails
+    _log_share(file_id, perm)  # before the mark: a build revokes this share even if the mark fails
     props = {"shared": "1"}
     if perm:
         props["perm"] = perm
@@ -125,6 +139,13 @@ def publish_image(data: bytes, mime: str, name: str, kind: str | None = None) ->
 
     kind (e.g. "plate") is stored in `appProperties.kind` of a new upload."""
     sha = hashlib.sha256(data).hexdigest()
+    with _lock:
+        sha_lock = _sha_locks.setdefault(sha, threading.Lock())
+    with sha_lock:  # the same bytes published twice at once: one upload, the other reuses it
+        return _publish(data, mime, name, kind, sha)
+
+
+def _publish(data: bytes, mime: str, name: str, kind: str | None, sha: str) -> str:
     folder = ensure_folder()
     existing = gws.drive_find(
         f"appProperties has {{ key='sha256' and value='{sha}' }} "
@@ -186,14 +207,19 @@ def _revoke_one(file_id: str, perm: str | None = None, props: dict | None = None
 def revoke(ids, perms: dict[str, str] | None = None) -> tuple[list[str], list[dict]]:
     """Remove link sharing from these files. Never raises for one file: returns
     (revoked ids, [{"file", "error"}] for files that could not be revoked or were refused)."""
-    revoked, failed = [], []
-    for fid in dict.fromkeys(ids):
+    def one(fid):
         try:
             _revoke_one(fid, (perms or {}).get(fid))
-            revoked.append(fid)
+            return fid, None
         except Exception as e:  # noqa: BLE001 (one file must not stop the others)
-            failed.append({"file": fid, "error": str(e) or repr(e)})
-    return revoked, failed
+            return fid, {"file": fid, "error": str(e) or repr(e)}
+
+    unique = list(dict.fromkeys(ids))
+    if not unique:
+        return [], []
+    with ThreadPoolExecutor(max_workers=REVOKE_WORKERS) as pool:
+        results = list(pool.map(one, unique))  # input order kept
+    return [f for f, err in results if err is None], [err for _, err in results if err]
 
 
 def _is_plate(f: dict) -> bool:
@@ -263,7 +289,8 @@ def render_slide_png(html_path: Path, n: int, out: Path) -> Path:
         raise RuntimeError("Chrome not found for the fallback render; set GSLIDER_CHROME to its path")
     html_path = Path(html_path).resolve()
     out = Path(out).resolve()
-    soup = BeautifulSoup(html_path.read_text(encoding="utf-8"), "html.parser")
+    safe, _ = sanitize.safe_deck(html_path)  # no deck scripts; nothing from outside its folder
+    soup = BeautifulSoup(safe, "html.parser")
     wraps = soup.select(".slide-wrap")
     if not 1 <= n <= len(wraps):
         raise ValueError(f"slide {n} not in {html_path.name} ({len(wraps)} slides)")
@@ -273,8 +300,6 @@ def render_slide_png(html_path: Path, n: int, out: Path) -> Path:
     head = soup.head or soup.new_tag("head")
     if soup.head is None:
         (soup.html or soup).insert(0, head)
-    base = soup.new_tag("base", href=html_path.parent.as_uri() + "/")
-    head.insert(0, base)
     style = soup.new_tag("style")
     style.string = _render_css(_print_rules(css))
     head.append(style)  # last in head, after the deck's own styles
@@ -294,7 +319,7 @@ def render_slide_png(html_path: Path, n: int, out: Path) -> Path:
              f"--window-size={SLIDE_W},{SLIDE_H}", "--force-device-scale-factor=1",
              "--hide-scrollbars", "--virtual-time-budget=3000",
              f"--user-data-dir={profile}", "--no-first-run", "--no-default-browser-check",
-             tmp_html.as_uri()],
+             *sanitize.CHROME_FLAGS, tmp_html.as_uri()],
             capture_output=True, text=True, timeout=120)
     finally:
         shutil.rmtree(profile, ignore_errors=True)
