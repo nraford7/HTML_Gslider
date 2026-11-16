@@ -7,6 +7,7 @@ name = "gslider"
 version = "0.1.0"
 description = "Build editable Google Slides decks from HTML slide decks"
 requires-python = ">=3.11"
+license = "MIT"
 dependencies = [
     "beautifulsoup4",
     "Pillow",

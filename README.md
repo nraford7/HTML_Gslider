@@ -91,3 +91,7 @@ Add one or two PNGs to `~/.config/gslider/config.json`:
 ```
 
 One file is used for both backgrounds when only one is set. With none, slides have no logo.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
