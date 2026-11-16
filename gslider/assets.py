@@ -35,7 +35,6 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from bs4 import BeautifulSoup
 
 from gslider import gws, sanitize
 
@@ -290,7 +289,7 @@ def render_slide_png(html_path: Path, n: int, out: Path) -> Path:
     html_path = Path(html_path).resolve()
     out = Path(out).resolve()
     safe, _ = sanitize.safe_deck(html_path)  # no deck scripts; nothing from outside its folder
-    soup = BeautifulSoup(safe, "html.parser")
+    soup = sanitize.parse(safe)
     wraps = soup.select(".slide-wrap")
     if not 1 <= n <= len(wraps):
         raise ValueError(f"slide {n} not in {html_path.name} ({len(wraps)} slides)")
@@ -303,6 +302,7 @@ def render_slide_png(html_path: Path, n: int, out: Path) -> Path:
     style = soup.new_tag("style")
     style.string = _render_css(_print_rules(css))
     head.append(style)  # last in head, after the deck's own styles
+    sanitize.lock_down(soup)
 
     work = OUT / "render"
     work.mkdir(parents=True, exist_ok=True)

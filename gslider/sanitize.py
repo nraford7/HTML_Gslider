@@ -27,6 +27,17 @@ What it does:
 - Other URL attributes (media `src`, `use` to another file, form actions, ...) are removed.
 - CSS escapes that spell a letter or digit (`\\75 rl(`) are decoded first, so they cannot
   hide a `url(`.
+- The deck is parsed with html5lib (the WHATWG parser Chrome implements), so markup cannot
+  hide from the sanitiser behind a construct the two parsers read differently (`<!-->`).
+  Comments, CDATA and processing instructions are removed.
+
+parse(html) -> BeautifulSoup: the same html5lib parse, for every caller that edits a page
+Chrome will open.
+lock_down(soup, script_nonce=None): puts a Content-Security-Policy `<meta>` first in `<head>`
+(call it last, on the page as written). Loads are limited to `data:` and the two Google
+Fonts hosts, frames and objects to none, scripts to the one carrying script_nonce (none
+when not given). The second layer: if anything gets past the sanitiser, Chrome still loads
+nothing from disk or the network.
 
 CHROME_FLAGS: extra Chrome flags for every run (belt and braces): host names other than
 the two Google Fonts hosts do not resolve.
@@ -41,7 +52,7 @@ import threading
 import urllib.parse
 from pathlib import Path
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, CData, Comment, Declaration, Doctype, ProcessingInstruction
 
 from gslider import fetch
 
@@ -257,7 +268,29 @@ def _srcset(value: str, ctx: _Ctx) -> str:
     return ", ".join(out)
 
 
+def parse(html: str) -> BeautifulSoup:
+    return BeautifulSoup(html, "html5lib")
+
+
+def lock_down(soup: BeautifulSoup, script_nonce: str | None = None) -> None:
+    scripts = f"'nonce-{script_nonce}'" if script_nonce else "'none'"
+    policy = ("default-src 'none'; img-src data:; media-src data:; "
+              f"font-src data: https://{FONT_FILE_HOST}; style-src 'unsafe-inline' https://{FONT_CSS_HOST}; "
+              f"script-src {scripts}; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'")
+    meta = soup.new_tag("meta")
+    meta["http-equiv"] = "Content-Security-Policy"
+    meta["content"] = policy
+    head = soup.head
+    if head is None:
+        head = soup.new_tag("head")
+        (soup.html or soup).insert(0, head)
+    head.insert(0, meta)
+
+
 def _sanitize_soup(soup: BeautifulSoup, ctx: _Ctx) -> None:
+    for node in [n for n in soup.descendants  # find_all(string=) skips empty comments (`<!---->`)
+                 if isinstance(n, (Comment, CData, ProcessingInstruction, Declaration)) and not isinstance(n, Doctype)]:
+        node.extract()
     for tag in soup.find_all(_DROP_TAGS):
         tag.decompose()
     for tag in soup.find_all("meta"):
@@ -340,7 +373,7 @@ def _sanitize_soup(soup: BeautifulSoup, ctx: _Ctx) -> None:
 def safe_html(html: str, base_dir: Path, refused: list | None = None) -> str:
     """The deck with everything Chrome could load from outside base_dir removed or inlined.
     Refused sources are appended to `refused` as {"src", "reason"} (each once)."""
-    soup = BeautifulSoup(html, "html.parser")
+    soup = parse(html)
     _sanitize_soup(soup, _Ctx(Path(base_dir), refused))
     return str(soup)
 

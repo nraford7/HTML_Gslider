@@ -31,7 +31,6 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from bs4 import BeautifulSoup
 from PIL import Image
 
 from gslider import assets, sanitize
@@ -105,7 +104,7 @@ def prepare_html(html_path: Path, n: int) -> tuple[str, str]:
     isolation CSS, plate CSS and the measure script with a fresh random output id."""
     html_path = Path(html_path).resolve()
     safe, _ = sanitize.safe_deck(html_path)
-    soup = BeautifulSoup(safe, "html.parser")
+    soup = sanitize.parse(safe)
     wraps = soup.select(".slide-wrap")
     if not 1 <= n <= len(wraps):
         raise ValueError(f"slide {n} not in {html_path.name} ({len(wraps)} slides)")
@@ -124,9 +123,11 @@ def prepare_html(html_path: Path, n: int) -> tuple[str, str]:
     head.append(plate)
 
     out_id = new_out_id()
-    script = soup.new_tag("script", id="gslider-measure-js")
+    nonce = secrets.token_hex(16)
+    script = soup.new_tag("script", id="gslider-measure-js", nonce=nonce)
     script.string = MEASURE_JS.read_text(encoding="utf-8").replace(ID_PLACEHOLDER, out_id)
     (soup.body or soup.html or soup).append(script)  # after sanitising: the only script in the page
+    sanitize.lock_down(soup, nonce)
     return str(soup), out_id
 
 

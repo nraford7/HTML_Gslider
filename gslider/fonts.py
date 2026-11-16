@@ -113,7 +113,8 @@ def google_font_available(family: str) -> bool:
 
 
 def _download(url: str, dest: Path) -> None:
-    subprocess.run(["curl", "-sfL", "--max-time", "60", "--max-filesize", "20M", "-o", str(dest), url],
+    subprocess.run(["curl", "-sfL", "--proto", "=https", "--proto-redir", "=https", "--max-time", "60",
+                    "--max-filesize", "20M", "-o", str(dest), url],
                    check=True)
 
 

@@ -262,3 +262,95 @@ def test_google_fonts_still_load(tmp_path):
 <body><div class="slide-wrap"><p>Fonts load</p></div></body></html>""")
     m = measure.measure_slide(page, 1, tmp_path / "m")
     assert m["unloaded"] == [] and m["blocks"][0]["runs"][0]["family"] == "Lobster"
+
+
+# --- parser differential and the CSP backstop (re-review B1) ---------------------------
+
+_COMMENT_TRICKS = (
+    "<!--><img src='{s}'>-->",  # an abruptly closed comment: empty to Chrome, open to html.parser
+    "<!---><img src='{s}'>-->",
+    "<!-- a --!><img src='{s}'>-->",
+)
+
+
+@pytest.mark.parametrize("trick", _COMMENT_TRICKS)
+def test_comment_tricks_cannot_hide_markup(folder, tmp_path, trick):
+    secret = (tmp_path / "secret" / "s.png").as_uri()
+    out = _clean(f"<div>{trick.format(s=secret)}</div>", folder)
+    assert "secret" not in out and "<!--" not in out
+
+
+def test_comments_removed(folder):
+    out = _clean("<p>a<!-- note --></p><![CDATA[x]]><?pi y?>", folder)
+    assert "note" not in out and "<!" not in out and "<?" not in out
+
+
+def test_csp_first_in_head_and_nonce_on_measure_script(folder):
+    page = folder / "deck.html"
+    page.write_text('<html><head><style>p{}</style></head><body><div class="slide-wrap"></div></body></html>')
+    html, _ = measure.prepare_html(page, 1)
+    soup = sanitize.parse(html)
+    first = soup.head.find(True)
+    assert first.name == "meta" and first["http-equiv"] == "Content-Security-Policy"
+    policy = first["content"]
+    assert "default-src 'none'" in policy and "'unsafe-inline'" not in policy.split("script-src")[1].split(";")[0]
+    nonce = soup.find("script", id="gslider-measure-js")["nonce"]
+    assert f"'nonce-{nonce}'" in policy
+
+
+def test_render_page_has_csp_without_scripts(folder, monkeypatch, tmp_path):
+    page = folder / "deck.html"
+    page.write_text('<div class="slide-wrap"><div class="slide">x</div></div>')
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["html"] = Path(cmd[-1][len("file://"):]).read_text()
+        shot = next(a for a in cmd if a.startswith("--screenshot="))[len("--screenshot="):]
+        Path(shot).write_bytes(b"png")
+        return assets.subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(assets.subprocess, "run", fake_run)
+    monkeypatch.setattr(assets, "OUT", tmp_path / "o")
+    assets.render_slide_png(page, 1, tmp_path / "s.png")
+    meta = sanitize.parse(seen["html"]).head.find(True)
+    assert meta["http-equiv"] == "Content-Security-Policy" and "script-src 'none'" in meta["content"]
+
+
+def _red_text_page(folder: Path, tmp_path: Path, body: str) -> Path:
+    (tmp_path / "secret" / "t.html").write_text(
+        "<body style='margin:0;background:#ff0000'>secret</body>")
+    page = folder / "deck.html"
+    page.write_text("<!doctype html><html><head><style>*{margin:0} .slide-wrap{width:1920px;height:1080px;"
+                    "position:relative;background:#fff}</style></head><body><div class='slide-wrap'>"
+                    f"<p style='position:absolute;left:100px;top:100px;font:40px Georgia'>Text</p>{body}"
+                    "</div></body></html>")
+    return page
+
+
+@needs_chrome
+def test_comment_trick_absent_from_plate(folder, tmp_path):
+    s, t = (tmp_path / "secret" / "s.png").as_uri(), (tmp_path / "secret" / "t.html").as_uri()
+    pos = "position:absolute;top:400px;width:300px;height:300px"
+    page = _red_text_page(folder, tmp_path,
+                          f"<!--><img src='{s}' style='{pos};left:100px'>"
+                          f"<iframe src='{t}' style='{pos};left:500px;border:0'></iframe>-->")
+    m = measure.measure_slide(page, 1, tmp_path / "m")
+    img = Image.open(m["plate"]).convert("RGB")
+    assert RED not in _area(img, (100, 400, 900, 700))
+
+
+@needs_chrome
+def test_csp_blocks_local_files_even_unsanitised(folder, tmp_path, monkeypatch):
+    """Layer two on its own: hand Chrome the raw deck (sanitiser skipped); the CSP still blocks
+    file:// images and frames."""
+    s, t = (tmp_path / "secret" / "s.png").as_uri(), (tmp_path / "secret" / "t.html").as_uri()
+    pos = "position:absolute;top:400px;width:300px;height:300px"
+    page = _red_text_page(folder, tmp_path,
+                          f"<img src='{s}' style='{pos};left:100px'>"
+                          f"<iframe src='{t}' style='{pos};left:500px;border:0'></iframe>"
+                          f"<div style='{pos};left:900px;background:url({s})'></div>")
+    monkeypatch.setattr(sanitize, "safe_deck", lambda p: (Path(p).read_text(), []))
+    m = measure.measure_slide(page, 1, tmp_path / "m")
+    img = Image.open(m["plate"]).convert("RGB")
+    assert RED not in _area(img, (100, 400, 1200, 700))
+    assert [b["runs"][0]["text"] for b in m["blocks"]] == ["Text"]  # our nonce'd script still ran
