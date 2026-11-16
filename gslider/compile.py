@@ -51,8 +51,15 @@ MIN_COL_EMU = 406400  # Slides refuses table columns under 32pt
 CELL_PAD = 7.2  # Slides' default table cell padding (0.1in each side), pt
 
 
+def _unresolved(img: dict) -> None:
+    """ValueError for a linked image build did not resolve (or was not asked to)."""
+    if img.get("src") and img.get("data") is None:
+        raise ValueError(f"linked image {img['src']} not resolved")
+
+
 def _aspect(img: dict) -> float:
     """Width / height of an image Slides can insert; ValueError (slide falls back) otherwise."""
+    _unresolved(img)
     mime, data = img.get("mime"), img.get("data")
     fmt = IMAGE_FORMATS.get(mime)
     if fmt is None:
@@ -629,6 +636,9 @@ def compile_slide(slide: dict, layout: Layout, assets: dict, ground: str, logo: 
     for compact in (False, True):
         s = _Slide(n, ground, layout, assets, logo)
         try:
+            for img in [*slide["blocks"], slide.get("background") or {}]:
+                if img.get("kind") == "image":
+                    _unresolved(img)
             if slide["kind"] in ("cover", "closing"):
                 _cover(s, slide)
             else:

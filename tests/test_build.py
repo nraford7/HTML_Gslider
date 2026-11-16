@@ -1024,3 +1024,163 @@ def test_cli_unshare_assets(monkeypatch, capsys):
         "files": 1, "revoked": 0, "private": 0, "purged": 0, "failed": [{"file": "z", "error": "e"}]})
     assert cli.main(["unshare-assets"]) == 1
     assert "z" in capsys.readouterr().err
+
+
+# --- Task 8: linked images ---------------------------------------------------------------
+
+def _png_bytes(w=40, h=20):
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), (200, 30, 30)).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _linked_deck(tmp_path, src):
+    p = tmp_path / "linked.html"
+    p.write_text('<html><head><title>L</title></head><body>'
+                 '<div class="slide-wrap" data-slide-id="a"><div class="slide dk"><div class="content">'
+                 f'<h2>Title</h2><img src="{src}"></div></div></div></body></html>')
+    return p
+
+
+def _publish_recorder(monkeypatch):
+    published = []
+
+    def fake_publish(data, mime, name, kind=None):
+        published.append((data, mime, name))
+        return f"https://drive.google.com/uc?export=download&id=IMG{len(published)}"
+
+    monkeypatch.setattr(build.assets, "publish_image", fake_publish)
+    return published
+
+
+def test_build_resolves_linked_image(google, monkeypatch, tmp_path):
+    png = _png_bytes()
+    (tmp_path / "img").mkdir()
+    (tmp_path / "img" / "chart.png").write_bytes(png)
+    published = _publish_recorder(monkeypatch)
+    res = build.build(_linked_deck(tmp_path, "img/chart.png"), "T", style="template")
+    (plan,) = res.plans
+    assert plan["status"] == "native", plan["reason"]
+    assert any("createImage" in r and r["createImage"]["url"].endswith("id=IMG1") for r in plan["requests"])
+    assert published[0][:2] == (png, "image/png")
+    deck = json.loads((res.out_dir / "deck.json").read_text())
+    (img,) = [b for b in deck["slides"][0]["blocks"] if b["kind"] == "image"]
+    assert img["src"] == "img/chart.png" and img["bytes"] == len(png)
+
+
+def test_build_resolves_linked_url_image_through_fetch(google, monkeypatch, tmp_path):
+    png = _png_bytes()
+    seen = []
+    monkeypatch.setattr(build.fetch, "resolve_image",
+                        lambda src, base: seen.append((src, base)) or (png, "image/png"))
+    _publish_recorder(monkeypatch)
+    html = _linked_deck(tmp_path, "https://cdn.example.com/a.png")
+    res = build.build(html, "T", style="template")
+    assert res.plans[0]["status"] == "native"
+    assert seen == [("https://cdn.example.com/a.png", html.parent)]
+
+
+def test_unresolvable_image_falls_back_with_reason(google, monkeypatch, tmp_path):
+    monkeypatch.setattr(build.assets, "CHROME", "/fake/chrome")
+
+    def fake_render(html_path, n, out):
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_bytes(b"\x89PNG fake")
+        return Path(out)
+
+    monkeypatch.setattr(build.assets, "render_slide_png", fake_render)
+    _publish_recorder(monkeypatch)
+    res = build.build(_linked_deck(tmp_path, "../outside.png"), "T", style="template")
+    (plan,) = res.plans
+    assert plan["status"] == "fallback"
+    assert "../outside.png" in plan["reason"] and "outside the HTML file's folder" in plan["reason"]
+    meta = json.loads((res.out_dir / "build.json").read_text())
+    assert "outside" in meta["fallbacks"]["1"]
+
+
+def test_linked_image_resolved_once_per_src(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(build.fetch, "resolve_image", lambda src, base: calls.append(src) or (b"\x89PNG", "image/png"))
+    deck = {"slides": [{"n": 1, "background": {"kind": "image", "src": "a.png"},
+                        "blocks": [{"kind": "image", "src": "a.png", "width": 0.6}]},
+                       {"n": 2, "background": None, "blocks": [{"kind": "image", "src": "a.png"},
+                                                              {"kind": "lead", "text": "x"}]}]}
+    build._resolve_linked(deck, tmp_path)
+    assert calls == ["a.png"]
+    b = deck["slides"][0]["blocks"][0]
+    assert b["mime"] == "image/png" and b["data"] == b"\x89PNG" and b["width"] == 0.6 and len(b["sha256"]) == 64
+    assert deck["slides"][0]["background"]["data"] == b"\x89PNG"
+
+
+def test_failed_linked_background_becomes_unknown_block(monkeypatch, tmp_path):
+    def boom(src, base):
+        raise build.fetch.FetchError("HTTP 404 from cdn.example.com")
+
+    monkeypatch.setattr(build.fetch, "resolve_image", boom)
+    deck = {"slides": [{"n": 1, "background": {"kind": "image", "src": "https://cdn.example.com/bg.jpg"},
+                        "blocks": []}]}
+    build._resolve_linked(deck, tmp_path)
+    (s,) = deck["slides"]
+    assert s["background"] is None
+    assert s["blocks"] == [{"kind": "unknown", "text": "https://cdn.example.com/bg.jpg",
+                            "cls": "linked-image https://cdn.example.com/bg.jpg: HTTP 404 from cdn.example.com"}]
+
+
+def test_html_style_does_not_fetch_linked_images(google, fake_compile, monkeypatch, tmp_path):
+    """html style: Chrome loads linked images into the plate; gslider fetches nothing."""
+    from gslider.parse import parse as real_parse
+
+    monkeypatch.setattr(build, "parse", real_parse)
+    monkeypatch.setattr(build.fetch, "resolve_image", lambda *a: pytest.fail("fetched in html style"))
+    build.build(_linked_deck(tmp_path, "https://cdn.example.com/a.png"), "T")
+
+
+def test_image_fetch_retry_reshares_assets(google, fake_compile, html, monkeypatch):
+    """Two builds share one cached logo: the first build's revoke removes the link the second
+    still needs. On Slides' image-fetch error the slide's Drive images are shared again before
+    each retry, and the final revoke covers them."""
+    monkeypatch.setattr(build.time, "sleep", lambda s: None)
+    google.props.update({"Flogo": {"gslider": "1"}, "Fbg": {"gslider": "1"}})
+    shares, marks = [], []
+    monkeypatch.setattr(gws, "drive_share_anyone", lambda fid: shares.append(fid) or f"anyone-{fid}")
+    monkeypatch.setattr(gws, "drive_update_props", lambda fid, props: marks.append((fid, props)))
+    plan = _plan(1)
+    plan["requests"] = [{"createSlide": {"objectId": "s01_slide"}},
+                        {"createImage": {"objectId": "s01_logo", "url": build.assets.uc_url("Flogo")}},
+                        {"createImage": {"objectId": "s01_bg", "url": build.assets.uc_url("Fbg")}},
+                        {"createImage": {"objectId": "s01_x", "url": "https://example.com/not-drive.png"}}]
+    fake_compile["plans"] = [plan, *fake_compile["plans"][1:]]
+    real_batch = google.batch
+    fails = {"n": 0}
+
+    def flaky(pid, reqs):
+        if any("createImage" in r for r in reqs) and fails["n"] < 2:
+            fails["n"] += 1
+            raise gws.GwsError(400, FETCH_MSG)
+        return real_batch(pid, reqs)
+
+    monkeypatch.setattr(gws, "batch", flaky)
+    res = build.build(html, "T")
+    assert shares == ["Flogo", "Fbg", "Flogo", "Fbg"]  # before each of the two retries
+    assert ("Flogo", {"shared": "1", "perm": "anyone-Flogo"}) in marks
+    revoke = [w for w in google.writes if w[0] == "revoke"][-1]
+    assert revoke[1] == ["Flogo", "Fbg"] and revoke[2] == {"Flogo": "anyone-Flogo", "Fbg": "anyone-Fbg"}
+    meta = json.loads((res.out_dir / "build.json").read_text())
+    assert meta["status"] == "done" and meta["revoked"] == ["Flogo", "Fbg"]
+    assert {"file": "Fbg", "perm": "anyone-Fbg"} in meta["shared"]
+
+
+def test_reshare_refuses_files_gslider_did_not_upload(google, monkeypatch):
+    google.props.update({"Fmine": {"gslider": "1"}, "Fother": {}})
+    shares = []
+    monkeypatch.setattr(gws, "drive_share_anyone", lambda fid: shares.append(fid) or "p")
+    monkeypatch.setattr(gws, "drive_update_props", lambda fid, props: None)
+    protected = next(iter(gws.PROTECTED_IDS))
+    done, failed = build.assets.reshare(["Fmine", "Fother", protected])
+    assert done == ["Fmine"] and shares == ["Fmine"]
+    assert [f["file"] for f in failed] == ["Fother", protected]
+    assert build.assets.SHARE_LOG == [("Fmine", "p")]

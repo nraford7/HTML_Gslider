@@ -9,7 +9,8 @@ that mark is shared then (a share that failed, or was revoked, on an earlier run
 Every share is also appended to SHARE_LOG (before the mark), so a build can revoke
 a share whose mark failed.
 
-revoke(ids) removes the `anyone` permissions again (build.py calls it after every
+reshare(ids) shares gslider files again (build.py, before retrying a slide whose image
+Slides could not fetch). revoke(ids) removes the `anyone` permissions again (build.py calls it after every
 build, also a failed one). It marks the file `shared = "0"` first and only then
 deletes the permission, so a later build re-shares a file whose delete failed.
 It touches only files that carry `gslider = "1"` and are not protected.
@@ -85,6 +86,10 @@ def ensure_folder() -> str:
     return _folder_id
 
 
+class RevokeError(Exception):
+    pass
+
+
 def _share(file_id: str) -> None:
     perm = gws.drive_share_anyone(file_id)
     SHARE_LOG.append((file_id, perm))  # before the mark: a build revokes this share even if the mark fails
@@ -92,6 +97,27 @@ def _share(file_id: str) -> None:
     if perm:
         props["perm"] = perm
     gws.drive_update_props(file_id, props)  # only after the permission exists
+
+
+def reshare(ids) -> tuple[list[str], list[dict]]:
+    """Share these gslider files by link again (each share goes to SHARE_LOG, so the build's
+    final revoke covers it). For a slide Slides could not fetch: another build may have
+    revoked the link to a cached file this build still needs. Only files that carry
+    `gslider = "1"` and are not protected. Never raises for one file:
+    returns (shared ids, [{"file", "error"}])."""
+    done, failed = [], []
+    for fid in dict.fromkeys(ids):
+        try:
+            if fid in gws.PROTECTED_IDS:
+                raise RevokeError("protected file; not touched")
+            props = gws.drive_get(fid, "id,appProperties").get("appProperties") or {}
+            if props.get("gslider") != "1":
+                raise RevokeError("not uploaded by gslider (no appProperties.gslider=1); not touched")
+            _share(fid)
+            done.append(fid)
+        except Exception as e:  # noqa: BLE001 (one file must not stop the others)
+            failed.append({"file": fid, "error": str(e) or repr(e)})
+    return done, failed
 
 
 def publish_image(data: bytes, mime: str, name: str, kind: str | None = None) -> str:
@@ -123,10 +149,6 @@ def publish_image(data: bytes, mime: str, name: str, kind: str | None = None) ->
 
 
 # --- revoke sharing -----------------------------------------------------------------
-
-class RevokeError(Exception):
-    pass
-
 
 def _revoke_one(file_id: str, perm: str | None = None, props: dict | None = None) -> int:
     """Remove every `anyone` permission from one gslider file; returns how many were removed.

@@ -36,7 +36,16 @@ Images are uploaded to the Drive folder `HTML_Gslider assets` (a folder you own)
 
 A link that cannot be removed does not fail the build. The file is named in `report.md` and on the terminal. A later build that uses the same image shares it again for its own run.
 
-Do not run two builds at the same time that use the same image (for example the brand logo). The first build to finish removes the link that the other build still needs.
+Two builds at the same time can use the same image (for example the brand logo). The first build to finish removes the link that the other build still needs. When Slides then cannot fetch an image for a slide, gslider shares that slide's Drive images again before each retry (3 retries, after 5, 15 and 30 seconds). These shares are added to `shared`, and the build removes them when it ends.
+
+Linked images (template style). An `<img src>` or `url(...)` that is not a data URI is read before compile:
+
+- Paths: relative to the HTML file's folder, absolute, or `file://` (no host). The resolved path (symlinks followed) must be inside the HTML file's folder.
+- `http` and `https` URLs: gslider resolves the host and refuses it if any address is loopback, private, link-local, shared (100.64.0.0/10), multicast, reserved or unspecified, also when written in an IPv6 form (IPv4-mapped, NAT64, 6to4, Teredo). It connects to the checked address, with the host name kept for TLS and the `Host` header. Each redirect target gets the same checks, and only `http` and `https` targets are followed, at most 5. Limits: 50 MB (counted while reading), 20 seconds per read, 120 seconds per download. Proxy settings are not used.
+- Every other scheme is refused.
+- The bytes must be a PNG, JPEG or GIF.
+
+An image that cannot be read becomes an `unknown` block with the reason (`linked-image <src>: <reason>`), so only its slide falls back. Each distinct source is read once per build. In html style, Chrome loads linked images itself when it draws the plate, and gslider downloads nothing.
 
 `gslider unshare-assets` removes link sharing from every file in `HTML_Gslider assets` that gslider uploaded (marked `gslider` in Drive). Use it after a failed revoke, or once for files shared by older versions of gslider. It prints how many files it found, how many had a link, how many were already private and how many failed (exit code 1 if any failed). With `--purge-plates` it also deletes the plate pictures. Decks keep their own copy, so built decks do not change. It never touches files that gslider did not upload, or ids under `protected_ids`.
 

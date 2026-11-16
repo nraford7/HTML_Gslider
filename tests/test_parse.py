@@ -304,30 +304,51 @@ def test_identical_drop_elements_counted_twice():
 
 @pytest.mark.parametrize("inner", [
     '<img src="photo.jpg">',
+    '<div class="side-img" style="background-image:url(\'photo.jpg\')"></div>',
+    '<img src="https://cdn.example.com/photo.jpg">',
+])
+def test_linked_img_is_image_block_with_src(inner):
+    """Task 8: a linked image is an `image` block with `src` and no bytes; build resolves it.
+    Compiled without resolving, the slide falls back naming the src."""
+    deck, (p,) = compiled(wrap(inner))
+    (img,) = [b for b in deck["slides"][0]["blocks"] if b["kind"] == "image"]
+    assert img["src"].endswith("photo.jpg") and "data" not in img and "sha256" not in img
+    assert p["status"] == "fallback" and "photo.jpg" in p["reason"] and "not resolved" in p["reason"]
+
+
+@pytest.mark.parametrize("inner", [
     '<div class="col"><img src="photo.jpg"></div>',
     '<table class="tbl"><tr><td>a <img src="photo.jpg"></td></tr></table>',
-    '<div class="side-img" style="background-image:url(\'photo.jpg\')"></div>',
 ])
-def test_external_img_falls_back(inner):
+def test_linked_img_inside_cell_falls_back(inner):
+    """An image inside a cell has no place of its own in template style, linked or not."""
     deck, (p,) = compiled(wrap(inner))
-    assert any(b["kind"] == "unknown" and b["cls"].startswith("external-image")
-               and b["text"] == "photo.jpg" for b in deck["slides"][0]["blocks"])
+    assert any(b["kind"] == "unknown" and b["cls"] == "inline-image photo.jpg" and b["text"] == "photo.jpg"
+               for b in deck["slides"][0]["blocks"])
     assert p["status"] == "fallback" and "photo.jpg" in p["reason"]
 
 
-def test_cover_url_image_falls_back():
+def test_two_linked_images_stay_distinct():
+    """Amendment 7: _image_key includes src, so a second linked image is not matched to the first."""
+    deck, _ = compiled(wrap('<img src="a.png"><div class="col"><img src="b.png"></div>'))
+    blocks = deck["slides"][0]["blocks"]
+    assert [b["src"] for b in blocks if b["kind"] == "image"] == ["a.png"]
+    assert any(b["kind"] == "unknown" and b["text"] == "b.png" for b in blocks)
+
+
+def test_cover_url_image_is_linked_image():
     html = wrap('<div class="cv-text"><h1 class="cv-title">Title</h1></div>'
                 '<div class="cv-img" style="background-image:url(cover.jpg)"></div>', content=False)
     deck, (p,) = compiled(html)
     assert deck["slides"][0]["kind"] == "cover"
-    assert p["status"] == "fallback"
-    assert p["reason"].startswith("unknown block") and "cover.jpg" in p["reason"]
+    assert any(b["kind"] == "image" and b["src"] == "cover.jpg" for b in deck["slides"][0]["blocks"])
+    assert p["status"] == "fallback" and "cover.jpg" in p["reason"]
 
 
-def test_slide_background_url_falls_back():
+def test_slide_background_url_is_linked_image():
     deck, (p,) = compiled(wrap('<p class="lead">x</p>', style="background:url(bg.jpg) center/cover"))
     (s,) = deck["slides"]
-    assert s["background"] is None
+    assert s["background"] == {"kind": "image", "src": "bg.jpg"}
     assert p["status"] == "fallback" and "bg.jpg" in p["reason"]
 
 
@@ -337,8 +358,7 @@ PNG = ("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADU
 
 def test_mixed_images_fall_back():
     deck, (p,) = compiled(wrap(f'<img src="{PNG}"><img src="photo.jpg">'))
-    ks = kinds(deck["slides"][0])
-    assert "image" in ks and "unknown" in ks
+    assert kinds(deck["slides"][0]) == ["title", "image", "image"]
     assert p["status"] == "fallback" and "photo.jpg" in p["reason"]
 
 
@@ -440,7 +460,7 @@ def test_url_regex_reads_each_quote_form():
 
     for style in ("background:url(a.jpg)", "background:url('a.jpg')", 'background:url("a.jpg")',
                   "background:url( 'a.jpg' )"):
-        assert _image_from_style(style)["text"] == "a.jpg", style
+        assert _image_from_style(style)["src"] == "a.jpg", style
 
 
 def test_w60_image_is_placed_once_and_native():
@@ -453,7 +473,7 @@ def test_image_beside_content_falls_back():
     html = ('<div class="slide-wrap"><div class="slide dk"><div class="content"><h2 class="h2">T</h2>'
             '</div><img src="photo.jpg"></div></div>')
     deck, (p,) = compiled(html)
-    assert any(b["kind"] == "unknown" and b["cls"] == "external-image photo.jpg"
+    assert any(b["kind"] == "unknown" and b["cls"] == "inline-image photo.jpg"
                for b in deck["slides"][0]["blocks"])
     assert p["status"] == "fallback" and "photo.jpg" in p["reason"]
 

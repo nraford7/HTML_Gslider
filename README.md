@@ -83,19 +83,25 @@ One `.slide-wrap` per slide, each drawn at 1920 x 1080 px. In html style that is
 </div></div>
 ```
 
-`.dk` gives the slide the dark background; leave it off for the light one. gslider also reads tables (`table.tbl`), timelines (`.timeline .tl`), bands (`.band`), stats (`.stats .stat`), images embedded as data URIs, and cover and closing slides. The full list of blocks is at the top of `gslider/parse.py`.
+`.dk` gives the slide the dark background; leave it off for the light one. gslider also reads tables (`table.tbl`), timelines (`.timeline .tl`), bands (`.band`), stats (`.stats .stat`), images (embedded as data URIs, or linked by path or URL), and cover and closing slides. The full list of blocks is at the top of `gslider/parse.py`.
 
 ## Limits
 
 - **Build once, near the end.** gslider is a one-way trip. After someone comments, make changes in Slides. Rebuilding with `--into` replaces every slide, and gslider refuses to do it on a deck that has comments.
 - **Images are shared by link while the build runs.** Slides can only insert an image it can download. So logos, background images, plates and pictures of fallback slides are uploaded to a folder in your Drive with "anyone with the link can view". When the build ends, gslider removes these links again, also when the build fails. Slides keeps its own copy of each image, so the deck still shows them. `out/<deck-name>/build.json` lists every shared file (`shared_assets`, `shared`), the plates (`plates`), the files whose link was removed (`revoked`) and any it could not remove (`revoke_failed`). `report.md` lists them too. For a short time during the build, anyone with a link can open these files. Think about this before building a confidential deck.
-- **One build at a time per image.** Do not run two builds at the same time that use the same image (for example your logo). The first build to finish removes the link that the other build still needs, and the other build then fails.
+- **Two builds at the same time can share an image.** When two builds use the same image (for example your logo), the first build to finish removes the link that the other build still needs. If Slides then cannot fetch an image, gslider shares that slide's images again and retries the slide (up to 3 times). The second build removes those links when it ends.
 - **html style: plates are pictures.** Backgrounds, rules, shapes, icons and images are one picture per slide. You can move and edit the text, not the shapes under it.
 - **html style: some text stays in the picture.** Rotated, scaled or clipped text, and text inside SVG, cannot become a text box. It stays in the plate, and the report lists it under "Left in plate".
 - **html style: letter-spacing is dropped.** Slides has no letter-spacing. Spaced-out labels are set without it, and the report lists each one.
 - **html style: fonts must load.** A slide whose web font does not load in Chrome becomes a picture, with the reason in the report.
 - **template style: one look.** The design uses dark and light backgrounds with Playfair Display and Libre Franklin. To change it, edit `gslider/layouts.yaml`.
-- **Not supported:** charts, animation, and images linked by URL (embed them as data URIs, or the slide falls back).
+- **Linked images.** In template style, gslider reads each `<img src>` or `url(...)` that is not a data URI before it builds:
+  - A path (relative, absolute, or `file://`) must be inside the HTML file's folder, after symlinks are followed. A path outside it is refused.
+  - An `http` or `https` URL is downloaded: at most 50 MB, 20 seconds without data, at most 5 redirects. Each host, and each redirect target, must resolve only to public addresses. gslider refuses loopback, private, link-local, multicast, reserved and unspecified addresses (also in IPv6 forms such as `::ffff:127.0.0.1`), and connects to the address it checked. Proxy settings are not used.
+  - Other schemes (`ftp:`, `//host/...`) are refused.
+  - The file must be a PNG, JPEG or GIF, checked by its bytes (not by its name or the server's content type).
+  - If an image cannot be read, only its slide falls back, and the report gives the reason. In html style, Chrome draws linked images into the plate, and gslider does not download them.
+- **Not supported:** charts and animation.
 
 ## Safety
 

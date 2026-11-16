@@ -7,7 +7,9 @@ write to a deck without appProperties.gslider). Its id goes to
 ~/.config/gslider/config.json.
 
 build(): guard `--into` -> check the base (or target) pageSize -> lock out/<slug>/
--> build.json (status building) -> parse -> compile (pass 1 learns which asset keys
+-> build.json (status building) -> parse -> (template style) resolve linked images
+(`fetch.resolve_image`; one that fails becomes an `unknown` block with the reason, so only
+its slide falls back) -> compile (pass 1 learns which asset keys
 are needed and which slides fall back) -> refuse if a fallback needs Chrome and
 there is none -> publish images, logos and fallback renders (each shared id
 appended to build.json) -> compile again with URLs -> refuse if any asset is
@@ -47,12 +49,13 @@ import sys
 import tempfile
 import time
 import unicodedata
+import urllib.parse
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from bs4 import BeautifulSoup
 
-from gslider import assets, gws
+from gslider import assets, fetch, gws
 from gslider import measure as M
 from gslider.compile import compile_deck
 from gslider.htmlstyle import compile_html_deck
@@ -199,6 +202,44 @@ def _images(obj, found: dict) -> dict:
     return found
 
 
+def _resolve_linked(deck: dict, base_dir: Path) -> None:
+    """Give every linked image (`image{src}`, slide blocks and backgrounds) its bytes, mime and
+    sha256, in place. One that cannot be read becomes `unknown{cls: "linked-image <src>: <reason>"}`
+    (a failed background is dropped and that block added), so only its slide falls back.
+    Each distinct src is read once."""
+    cache: dict[str, tuple[bytes, str] | str] = {}
+
+    def resolve(img: dict) -> dict:
+        src = img["src"]
+        if src not in cache:
+            try:
+                cache[src] = fetch.resolve_image(src, base_dir)
+            except fetch.FetchError as e:
+                cache[src] = e.reason
+            except Exception as e:  # noqa: BLE001 (one image must not stop the deck)
+                cache[src] = str(e) or repr(e)
+            if isinstance(cache[src], str):
+                _log(f"linked image {src}: {cache[src]}")
+        got = cache[src]
+        if isinstance(got, str):
+            return {"kind": "unknown", "cls": f"linked-image {src}: {got}", "text": src}
+        data, mime = got
+        return {**img, "sha256": hashlib.sha256(data).hexdigest(), "mime": mime, "data": data}
+
+    def linked(b) -> bool:
+        return isinstance(b, dict) and b.get("kind") == "image" and b.get("src") and b.get("data") is None
+
+    for sl in deck["slides"]:
+        sl["blocks"] = [resolve(b) if linked(b) else b for b in sl["blocks"]]
+        if linked(sl.get("background")):
+            bg = resolve(sl["background"])
+            if bg["kind"] == "image":
+                sl["background"] = bg
+            else:
+                sl["background"] = None
+                sl["blocks"].append(bg)
+
+
 def publish_assets(keys: set[str], deck: dict, html_path: Path, html: str, slug: str,
                    out_dir: Path, include_internal: bool, on_publish=None,
                    plates: dict[int, Path] | None = None) -> dict[str, str]:
@@ -342,7 +383,21 @@ IMAGE_FETCH_ERROR = "problem retrieving the image"
 IMAGE_FETCH_DELAYS = (5, 15, 30)
 
 
+def _drive_image_ids(requests: list[dict]) -> list[str]:
+    """Drive file ids of the createImage URLs (assets.uc_url form) in one slide's requests."""
+    ids = []
+    for r in requests:
+        url = (r.get("createImage") or {}).get("url") or ""
+        parts = urllib.parse.urlsplit(url)
+        if parts.hostname == "drive.google.com":
+            ids += urllib.parse.parse_qs(parts.query).get("id", [])[:1]
+    return list(dict.fromkeys(ids))
+
+
 def _batch_retrying_image_fetch(pid: str, requests: list[dict], n: int = 0) -> None:
+    """Send one slide's batch; on Slides' image-fetch error, share the slide's Drive images again
+    (another build may have revoked a cached file's link) and retry after a pause. The shares go
+    to assets.SHARE_LOG, so this build's final revoke covers them."""
     attempts = len(IMAGE_FETCH_DELAYS) + 1
     for attempt in range(1, attempts + 1):
         try:
@@ -354,6 +409,13 @@ def _batch_retrying_image_fetch(pid: str, requests: list[dict], n: int = 0) -> N
                 raise
             delay = IMAGE_FETCH_DELAYS[attempt - 1]
             _log(f"slide {n}: Slides could not fetch an image (attempt {attempt}/{attempts}); retrying in {delay}s")
+            ids = _drive_image_ids(requests)
+            if ids:
+                done, failed = assets.reshare(ids)
+                if done:
+                    _log(f"slide {n}: shared {len(done)} image file(s) again")
+                for f in failed:
+                    _log(f"slide {n}: could not share {f['file']} again: {f['error']}")
             time.sleep(delay)
 
 
@@ -468,7 +530,7 @@ def _record_shared(meta: dict, fid: str, perm: str | None) -> bool:
     if entry is None:
         meta["shared"].append({"file": fid, "perm": perm})
         changed = True
-    elif perm and not entry.get("perm"):
+    elif perm and entry.get("perm") != perm:  # a later share (e.g. a re-share on retry) wins
         entry["perm"] = perm
         changed = True
     return changed
@@ -553,6 +615,7 @@ def build(html_path, title: str, ivory=frozenset(), include_internal: bool = Fal
 
 def _compile_template(deck: dict, html_path: Path, html: str, slug: str, out_dir: Path, ivory: set[int],
                       include_internal: bool, shared) -> list[dict]:
+    _resolve_linked(deck, html_path.parent)  # html style: Chrome draws linked images into the plate
     layout = load_layout()
     logos = logo_files()
     plans = compile_deck(deck, layout, {}, ivory, logo=bool(logos))
