@@ -14,7 +14,13 @@ appended to build.json) -> compile again with URLs -> refuse if any asset is
 still missing -> copy the base (or re-check comments and clear an `--into` deck)
 -> verify pageSize -> one batchUpdate per slide, in order (createSlide appends)
 -> delete the placeholder -> one read and one batch for the speaker notes of all
-fallback slides -> build.json done.
+fallback slides -> revoke link sharing -> build.json done.
+
+Revoke: Slides keeps its own copy of each image, so after the push (in a `finally`,
+also when the build failed) every file shared for this build loses its `anyone`
+permission (`assets.revoke`). build.json keeps `shared_assets` (ids) and adds
+`shared` [{file, perm}], `revoked` [ids] and `revoke_failed` [{file, error}].
+A failed revoke never fails the build; `gslider unshare-assets` cleans up.
 Two styles. `html` (the default) measures every slide in Chrome (`measure.py`,
 3 at a time) and compiles with `htmlstyle.compile_html_deck`: a text-free plate
 picture per slide (asset `plate:<n>`, file ids also in build.json `plates`) under
@@ -86,6 +92,8 @@ class BuildResult:
     url: str
     plans: list = field(default_factory=list)
     out_dir: Path | None = None
+    revoked: list = field(default_factory=list)
+    revoke_failed: list = field(default_factory=list)
 
 
 def deck_url(pid: str) -> str:
@@ -222,7 +230,8 @@ def publish_assets(keys: set[str], deck: dict, html_path: Path, html: str, slug:
             png = (plates or {}).get(n)
             if png is None:
                 continue
-            urls[key] = assets.publish_image(Path(png).read_bytes(), "image/png", f"{slug} slide {n:02d} plate.png")
+            urls[key] = assets.publish_image(Path(png).read_bytes(), "image/png", f"{slug} slide {n:02d} plate.png",
+                                             kind="plate")
         elif key in images:
             img = images[key]
             ext = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif"}.get(img["mime"], "bin")
@@ -449,6 +458,50 @@ def _uc_id(url: str) -> str:
     return url.rsplit("id=", 1)[-1]
 
 
+def _record_shared(meta: dict, fid: str, perm: str | None) -> bool:
+    """Add a shared file to build.json's `shared_assets` and `shared`; True if anything changed."""
+    changed = False
+    if fid not in meta["shared_assets"]:
+        meta["shared_assets"].append(fid)
+        changed = True
+    entry = next((e for e in meta["shared"] if e.get("file") == fid), None)
+    if entry is None:
+        meta["shared"].append({"file": fid, "perm": perm})
+        changed = True
+    elif perm and not entry.get("perm"):
+        entry["perm"] = perm
+        changed = True
+    return changed
+
+
+def _perm_since(fid: str, start: int) -> str | None:
+    """The permission id of the latest share of fid made since SHARE_LOG[start]."""
+    return next((p for f, p in reversed(assets.SHARE_LOG[start:]) if f == fid), None)
+
+
+def _revoke_shared(meta: dict, out_dir: Path, share_start: int) -> None:
+    """Remove link sharing from every file this build shared. Never raises an Exception."""
+    ids: list[str] = []
+    try:
+        for fid, perm in assets.SHARE_LOG[share_start:]:  # also shares whose publish failed afterwards
+            _record_shared(meta, fid, perm)
+        ids = list(meta["shared_assets"])
+        perms = {e["file"]: e["perm"] for e in meta["shared"] if e.get("file") and e.get("perm")}
+        revoked, failed = assets.revoke(ids, perms) if ids else ([], [])
+    except Exception as e:  # noqa: BLE001 (a failed revoke must not fail the build)
+        revoked, failed = [], [{"file": i, "error": f"revoke did not run: {e or repr(e)}"} for i in ids]
+    meta.update(revoked=revoked, revoke_failed=failed)
+    if revoked:
+        _log(f"link sharing removed from {len(revoked)} asset file(s)")
+    if failed:
+        _log("warning: link sharing NOT removed from " + ", ".join(f["file"] for f in failed)
+             + "; run `gslider unshare-assets`")
+    try:
+        _write(out_dir / "build.json", meta)
+    except OSError as e:
+        _log(f"warning: could not write build.json after revoking: {e}")
+
+
 def build(html_path, title: str, ivory=frozenset(), include_internal: bool = False,
           into: str | None = None, out_dir: Path | None = None, style: str = "html") -> BuildResult:
     html_path = Path(html_path)
@@ -468,9 +521,9 @@ def build(html_path, title: str, ivory=frozenset(), include_internal: bool = Fal
     meta = {"pid": into, "url": deck_url(into) if into else None, "title": title, "source": str(html_path),
             "base_id": None if into else src, "into": bool(into), "ivory": sorted(ivory),
             "include_internal": include_internal, "style": style, "status": "building",
-            "shared_assets": [], "plates": [],
+            "shared_assets": [], "shared": [], "plates": [], "revoked": [], "revoke_failed": [],
             "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
-    progress = {"last_good_slide": 0}
+    progress = {"last_good_slide": 0, "share_start": len(assets.SHARE_LOG)}
     with _out_lock(out_dir):
         _write(out_dir / "build.json", meta)
         try:
@@ -487,12 +540,15 @@ def build(html_path, title: str, ivory=frozenset(), include_internal: bool = Fal
             if pid:
                 msg += f"\nbuild.json: {out_dir / 'build.json'}; retry with --into {pid}"
             raise BuildError(msg) from e
+        finally:  # after push and notes, and after any failure: Slides already holds its copies
+            _revoke_shared(meta, out_dir, progress["share_start"])
 
     meta.update(status="done", finished=time.strftime("%Y-%m-%dT%H:%M:%S"),
                 last_good_slide=progress["last_good_slide"],
                 fallbacks={p["n"]: p["reason"] for p in plans if p["status"] == "fallback"})
     _write(out_dir / "build.json", meta)
-    return BuildResult(meta["pid"], deck_url(meta["pid"]), plans, out_dir)
+    return BuildResult(meta["pid"], deck_url(meta["pid"]), plans, out_dir,
+                       list(meta["revoked"]), list(meta["revoke_failed"]))
 
 
 def _compile_template(deck: dict, html_path: Path, html: str, slug: str, out_dir: Path, ivory: set[int],
@@ -549,10 +605,7 @@ def _build(html_path: Path, html: str, slug: str, out_dir: Path, title: str, ivo
 
     def shared(url: str, key: str = "") -> None:
         fid = _uc_id(url)
-        changed = False
-        if fid not in meta["shared_assets"]:
-            meta["shared_assets"].append(fid)
-            changed = True
+        changed = _record_shared(meta, fid, _perm_since(fid, progress.get("share_start", 0)))
         if key.startswith("plate:") and fid not in meta.setdefault("plates", []):
             meta["plates"].append(fid)
             changed = True

@@ -1,4 +1,4 @@
-"""Command line: gslider parse | build | check | init-base.
+"""Command line: gslider parse | build | check | init-base | unshare-assets.
 
 Runs as the console script `gslider` or as `python3 -m gslider.cli` (no install needed).
 """
@@ -65,6 +65,11 @@ def _parser() -> argparse.ArgumentParser:
 
     i = sub.add_parser("init-base", help="create the 960x540pt base deck once (id saved to ~/.config/gslider)")
     i.add_argument("--force", action="store_true", help="make a new base even if one is configured")
+
+    u = sub.add_parser("unshare-assets", help="remove link sharing from every gslider file in the "
+                                              "'HTML_Gslider assets' Drive folder (builds do this for their own files)")
+    u.add_argument("--purge-plates", action="store_true",
+                   help="also delete the plate pictures (html style); decks keep their own copy of every image")
     return ap
 
 
@@ -85,6 +90,12 @@ def main(argv: list[str] | None = None) -> int:
             fb = [p["n"] for p in res.plans if p["status"] == "fallback"]
             print(f"{res.url}\n{len(res.plans)} slides, {len(res.plans) - len(fb)} native"
                   + (f", fallback: {', '.join(map(str, fb))}" if fb else "") + f"\noutput: {res.out_dir}")
+            if res.revoked:
+                print(f"link sharing removed from {len(res.revoked)} asset files")
+            if res.revoke_failed:
+                print("gslider: link sharing NOT removed from "
+                      + ", ".join(f["file"] for f in res.revoke_failed)
+                      + "; run `gslider unshare-assets`", file=sys.stderr)
         elif args.cmd == "check":
             from gslider import check as C
 
@@ -106,6 +117,15 @@ def main(argv: list[str] | None = None) -> int:
             res = C.check(args.pid, deck, plans, out)
             print(f"report: {res.report}\ncontact sheet: {res.contact}\nok: {res.ok}")
             return 0 if res.ok else 1
+        elif args.cmd == "unshare-assets":
+            res = B.assets.unshare_all(purge_plates=args.purge_plates)
+            print(f"{res['files']} asset files: link sharing removed from {res['revoked']}, "
+                  f"already private {res['private']}"
+                  + (f", {res['purged']} plate files deleted" if args.purge_plates else "")
+                  + f", failed {len(res['failed'])}")
+            for f in res["failed"]:
+                print(f"gslider: {f['file']}: {f['error']}", file=sys.stderr)
+            return 1 if res["failed"] else 0
         elif args.cmd == "init-base":
             pid = B.init_base(force=args.force)
             print(f"base deck {pid}\n{B.deck_url(pid)}\nsaved to {B.CONFIG_PATH}")

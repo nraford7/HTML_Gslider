@@ -26,7 +26,19 @@ Rule: after anyone comments in Slides, do not re-upload. Make the later edits in
 
 Outputs go to `out/<slugified-name>/` (not in git). The folder name is the HTML file name in lower case, with accents removed and other characters changed to `-` (for example `reference-deck.html` gives `out/reference-deck/`). The folder holds `deck.json`, `plans.json`, `build.json`, `fallback/` renders, `measure/` plates (html style), `thumbs/`, `renders/` and `compare.png` (html style check), `contact.png` and `report.md`.
 
-Images are uploaded to the Drive folder `HTML_Gslider assets` (a folder you own) and shared view-only by link. This includes the fallback slides and, in html style, the plates. Each one is a PNG of the HTML slide, uploaded and shared by link like the other images. `build.json` lists every shared file id in `shared_assets`, and the plate ids again in `plates`.
+Images are uploaded to the Drive folder `HTML_Gslider assets` (a folder you own) and shared view-only by link while the build runs. This includes the fallback slides and, in html style, the plates. Each one is a PNG of the HTML slide, uploaded and shared like the other images. Slides keeps its own copy of each image it inserts. So when the build ends, gslider removes the link sharing from every file the build used. It does this also when the build fails. `build.json` records:
+
+- `shared_assets`: the id of every file shared for the build.
+- `shared`: the same files with the permission id gslider made (`{file, perm}`; `perm` is empty for a file shared by an earlier build).
+- `plates`: the plate ids (html style).
+- `revoked`: the files whose link was removed after the build.
+- `revoke_failed`: the files whose link could not be removed, with the error.
+
+A link that cannot be removed does not fail the build. The file is named in `report.md` and on the terminal. A later build that uses the same image shares it again for its own run.
+
+Do not run two builds at the same time that use the same image (for example the brand logo). The first build to finish removes the link that the other build still needs.
+
+`gslider unshare-assets` removes link sharing from every file in `HTML_Gslider assets` that gslider uploaded (marked `gslider` in Drive). Use it after a failed revoke, or once for files shared by older versions of gslider. It prints how many files it found, how many had a link, how many were already private and how many failed (exit code 1 if any failed). With `--purge-plates` it also deletes the plate pictures. Decks keep their own copy, so built decks do not change. It never touches files that gslider did not upload, or ids under `protected_ids`.
 
 html style limits: letter-spacing is dropped (Slides has none). Rotated, scaled or clipped text and text inside SVG stay in the plate as part of the picture. A font Google Fonts does not serve is replaced by Arial, Georgia or Courier New by its CSS generic family. A slide whose web font did not load in Chrome becomes a fallback picture with the reason.
 

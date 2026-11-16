@@ -88,7 +88,8 @@ One `.slide-wrap` per slide, each drawn at 1920 x 1080 px. In html style that is
 ## Limits
 
 - **Build once, near the end.** gslider is a one-way trip. After someone comments, make changes in Slides. Rebuilding with `--into` replaces every slide, and gslider refuses to do it on a deck that has comments.
-- **Images are shared by link.** Slides can only insert an image it can download, so logos, background images, plates and pictures of fallback slides are uploaded to a folder in your Drive with "anyone with the link can view". `out/<deck-name>/build.json` lists every shared file, with the plates also under `plates`. Think about this before building a confidential deck.
+- **Images are shared by link while the build runs.** Slides can only insert an image it can download. So logos, background images, plates and pictures of fallback slides are uploaded to a folder in your Drive with "anyone with the link can view". When the build ends, gslider removes these links again, also when the build fails. Slides keeps its own copy of each image, so the deck still shows them. `out/<deck-name>/build.json` lists every shared file (`shared_assets`, `shared`), the plates (`plates`), the files whose link was removed (`revoked`) and any it could not remove (`revoke_failed`). `report.md` lists them too. For a short time during the build, anyone with a link can open these files. Think about this before building a confidential deck.
+- **One build at a time per image.** Do not run two builds at the same time that use the same image (for example your logo). The first build to finish removes the link that the other build still needs, and the other build then fails.
 - **html style: plates are pictures.** Backgrounds, rules, shapes, icons and images are one picture per slide. You can move and edit the text, not the shapes under it.
 - **html style: some text stays in the picture.** Rotated, scaled or clipped text, and text inside SVG, cannot become a text box. It stays in the plate, and the report lists it under "Left in plate".
 - **html style: letter-spacing is dropped.** Slides has no letter-spacing. Spaced-out labels are set without it, and the report lists each one.
@@ -99,6 +100,13 @@ One `.slide-wrap` per slide, each drawn at 1920 x 1080 px. In html style that is
 ## Safety
 
 gslider writes only to decks it created itself, which it marks in Drive. It refuses to rebuild a deck with comments, and it never touches any deck ID you list under `protected_ids` in `~/.config/gslider/config.json`.
+
+After every build, gslider removes the "anyone with the link" sharing from the image files that build used. It changes sharing only on files it uploaded itself (marked in Drive). If a link could not be removed, the build still finishes, and `build.json` and `report.md` name the file. To remove every link that is left in the `HTML_Gslider assets` folder (for example from builds made with older versions), run:
+
+```
+gslider unshare-assets                 # remove link sharing from every gslider file in the folder
+gslider unshare-assets --purge-plates  # also delete the plate pictures (decks keep their own copies)
+```
 
 ## Your logo
 

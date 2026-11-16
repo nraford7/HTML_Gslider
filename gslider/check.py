@@ -763,6 +763,32 @@ def _shared_assets(meta: dict) -> list[str]:
     return [str(x) for x in v] if isinstance(v, list) else []
 
 
+def _sharing_report(meta: dict) -> list[str]:
+    """Asset files shared during the build, and whether the link was removed afterwards."""
+    shared = _shared_assets(meta)
+    L = ["", "## Asset files shared during the build", ""]
+    revoked = meta.get("revoked")
+    failed = [f for f in (meta.get("revoke_failed") or []) if isinstance(f, dict)]
+    if not isinstance(revoked, list):
+        L.append("build.json does not record removing the links (an older build): these files may still be "
+                 "shared with anyone who has the link. Run `gslider unshare-assets`.")
+        revoked = []
+    elif shared:
+        L.append(f"Link sharing was removed after the build from {len(revoked)} of {len(shared)} files.")
+    gone = set(map(str, revoked))
+    bad = {str(f.get("file")) for f in failed}
+    L += [f"- {s}" + (" (link removed)" if s in gone else " (STILL SHARED by link)" if s in bad or revoked else "")
+          for s in shared] or ["Not listed in build.json."]
+    plates = meta.get("plates") if isinstance(meta.get("plates"), list) else []
+    if plates:
+        L += ["", f"Plate pictures among them: {', '.join(map(str, plates))}"]
+    if failed:
+        L += ["", "### Sharing not removed", "",
+              *[f"- {f.get('file')}: {_cell(str(f.get('error') or ''))}" for f in failed],
+              "", "Run `gslider unshare-assets` to remove these links."]
+    return L
+
+
 def _cell(s: str) -> str:
     return (s or "").replace("|", "\\|").replace("\n", " ")
 
@@ -821,12 +847,7 @@ def write_report(path: Path, pid: str, deck: dict, plans: list, res: CheckResult
     else:
         drop = sorted({t for v in res.dropped.values() for t in v})
         L += ["", "## Dropped by design", "", (", ".join(f"`{t}`" for t in drop) if drop else "None.")]
-    shared = _shared_assets(meta)
-    L += ["", "## Shared asset files (anyone with the link can view)", ""]
-    L += [f"- {s}" for s in shared] or ["Not listed in build.json."]
-    plates = meta.get("plates") if isinstance(meta.get("plates"), list) else []
-    if plates:
-        L += ["", f"Plate pictures among them: {', '.join(map(str, plates))}"]
+    L += _sharing_report(meta)
     if res.notes:
         L += ["", "## Notes", "", *[f"- {x}" for x in res.notes]]
     path.parent.mkdir(parents=True, exist_ok=True)

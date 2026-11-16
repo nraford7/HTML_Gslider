@@ -189,6 +189,8 @@ PROT = gws.PROTECTED_IDS[0]
     lambda: gws.drive_upload("/tmp/x.png", "x.png", PROT, {}),
     lambda: gws.drive_share_anyone(PROT),
     lambda: gws.drive_update_props(PROT, {"shared": "1"}),
+    lambda: gws.drive_unshare(PROT, "anyoneWithLink"),
+    lambda: gws.drive_delete(PROT),
 ])
 def test_write_helpers_refuse_protected_ids(monkeypatch, write):
     calls = []
@@ -206,3 +208,41 @@ def test_drive_update_props_command_shape(monkeypatch):
     assert cmd[:4] == ["gws", "drive", "files", "update"]
     assert json.loads(cmd[cmd.index("--params") + 1])["fileId"] == "F"
     assert json.loads(cmd[cmd.index("--json") + 1]) == {"appProperties": {"shared": "1"}}
+
+
+# --- Task 7: revoke sharing -----------------------------------------------------------
+
+def _recording(monkeypatch, stdout):
+    seen = []
+    monkeypatch.setattr(gws.subprocess, "run", lambda cmd, **kw: seen.append(cmd) or _proc(stdout=stdout))
+    return seen
+
+
+def test_share_returns_perm_id(monkeypatch):
+    seen = _recording(monkeypatch, '{"kind": "drive#permission", "id": "anyoneWithLink", "type": "anyone"}')
+    assert gws.drive_share_anyone("F") == "anyoneWithLink"
+    cmd = seen[0]
+    assert cmd[:4] == ["gws", "drive", "permissions", "create"]
+    assert json.loads(cmd[cmd.index("--json") + 1]) == {"type": "anyone", "role": "reader"}
+
+
+def test_drive_permissions_lists_all_pages(monkeypatch):
+    pages = [_proc(stdout=json.dumps({"permissions": [{"id": "a", "type": "anyone"}], "nextPageToken": "t"})),
+             _proc(stdout=json.dumps({"permissions": [{"id": "u1", "type": "user"}]}))]
+    seen = []
+    monkeypatch.setattr(gws.subprocess, "run", lambda cmd, **kw: seen.append(cmd) or pages.pop(0))
+    assert gws.drive_permissions("F") == [{"id": "a", "type": "anyone"}, {"id": "u1", "type": "user"}]
+    assert seen[0][:4] == ["gws", "drive", "permissions", "list"]
+    first = json.loads(seen[0][seen[0].index("--params") + 1])
+    assert first["fileId"] == "F" and "type" in first["fields"] and "pageToken" not in first
+    assert json.loads(seen[1][seen[1].index("--params") + 1])["pageToken"] == "t"
+
+
+def test_drive_unshare_and_delete_command_shapes(monkeypatch):
+    seen = _recording(monkeypatch, "")  # Drive answers 204 with no body
+    gws.drive_unshare("F", "anyoneWithLink")
+    gws.drive_delete("F")
+    assert seen[0][:4] == ["gws", "drive", "permissions", "delete"]
+    assert json.loads(seen[0][seen[0].index("--params") + 1]) == {"fileId": "F", "permissionId": "anyoneWithLink"}
+    assert seen[1][:4] == ["gws", "drive", "files", "delete"]
+    assert json.loads(seen[1][seen[1].index("--params") + 1]) == {"fileId": "F"}

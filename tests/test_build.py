@@ -83,6 +83,13 @@ def google(monkeypatch, tmp_path):
     fake = FakeGoogle()
     for name in ("drive_get", "comments_count", "drive_copy", "get", "batch"):
         monkeypatch.setattr(gws, name, getattr(fake, name))
+
+    def fake_revoke(ids, perms=None):  # no build test may reach Drive's permissions
+        fake.writes.append(("revoke", list(ids), dict(perms or {})))
+        return list(ids), []
+
+    monkeypatch.setattr(build.assets, "revoke", fake_revoke)
+    monkeypatch.setattr(build.assets, "SHARE_LOG", [])
     monkeypatch.setattr(build, "CONFIG_PATH", tmp_path / "config.json")
     (tmp_path / "config.json").write_text(json.dumps({"base_id": "base1"}))
     monkeypatch.setattr(build, "OUT", tmp_path / "out")
@@ -792,8 +799,9 @@ def test_build_style_html_measures_and_publishes_plates(google, monkeypatch, tmp
         plate.write_bytes(b"\x89PNG plate")
         return _fake_measure(n, plate)
 
-    def fake_publish(data, mime, name):
+    def fake_publish(data, mime, name, kind=None):
         published.append(name)
+        assert kind == "plate"
         return f"https://drive.google.com/uc?export=download&id=f{len(published)}"
 
     monkeypatch.setattr(build.assets, "CHROME", "/fake/chrome")
@@ -874,3 +882,145 @@ def test_cli_style_default_html_and_template(monkeypatch, tmp_path):
     cli.main(["build", "d.html", "--title", "X"])
     cli.main(["build", "d.html", "--title", "X", "--style", "template"])
     assert seen == ["html", "template"]
+
+
+# --- Task 7: revoke sharing after the build -------------------------------------------
+
+def _publishing(monkeypatch, fake_compile, google, n_assets=2):
+    """Slide 1 needs the logo assets; each publish shares a new file (perm logged like assets._share)."""
+    _brand_logo(monkeypatch, both=True)
+    plans = list(fake_compile["plans"])
+    fake_compile["plans"] = [_plan(1, missing=["logo", "logo_dark"][:n_assets]), *plans[1:]]
+    published = []
+
+    def fake_publish(data, mime, name, kind=None):
+        published.append(name)
+        fid = f"F{len(published)}"
+        build.assets.SHARE_LOG.append((fid, f"perm{len(published)}"))
+        fake_compile["plans"] = [_plan(1), *plans[1:]]  # second compile: nothing missing
+        return f"https://drive.google.com/uc?export=download&id={fid}"
+
+    monkeypatch.setattr(build.assets, "publish_image", fake_publish)
+    return published
+
+
+def test_revoke_runs_after_push_and_notes(google, fake_compile, html, monkeypatch):
+    fake_compile["plans"][4] = _plan(5, status="fallback", notes="text")
+    _publishing(monkeypatch, fake_compile, google)
+    res = build.build(html, "T")
+    kinds = [w[0] for w in google.writes]
+    assert kinds[-1] == "revoke"
+    assert google.notes_inserts and kinds.index("revoke") > max(i for i, k in enumerate(kinds) if k == "batch")
+    assert google.writes[-1][1:] == (["F1", "F2"], {"F1": "perm1", "F2": "perm2"})
+    meta = json.loads((res.out_dir / "build.json").read_text())
+    assert meta["status"] == "done"
+    assert meta["shared_assets"] == ["F1", "F2"]
+    assert meta["shared"] == [{"file": "F1", "perm": "perm1"}, {"file": "F2", "perm": "perm2"}]
+    assert meta["revoked"] == ["F1", "F2"] and meta["revoke_failed"] == []
+    assert res.revoked == ["F1", "F2"] and res.revoke_failed == []
+
+
+def test_revoke_runs_after_failed_push(google, fake_compile, html, monkeypatch):
+    """Review Focus 2: a build that fails halfway still revokes what it shared."""
+    _publishing(monkeypatch, fake_compile, google)
+    google.fail_on = "s05_slide"
+    with pytest.raises(build.BuildError, match="slide 5"):
+        build.build(html, "T")
+    assert google.writes[-1][:2] == ("revoke", ["F1", "F2"])
+    meta = json.loads((build.OUT / "my-deck" / "build.json").read_text())
+    assert meta["status"] == "failed" and meta["last_good_slide"] == 4
+    assert meta["revoked"] == ["F1", "F2"] and meta["revoke_failed"] == []
+
+
+def test_revoke_runs_when_publishing_fails_midway(google, fake_compile, html, monkeypatch):
+    """A file shared whose publish then failed (no on_publish) is still revoked, from the share log."""
+    _brand_logo(monkeypatch, both=True)
+    fake_compile["plans"][0] = _plan(1, missing=["logo", "logo_dark"])
+
+    def fake_publish(data, mime, name, kind=None):
+        build.assets.SHARE_LOG.append(("Fhalf", "permH"))
+        raise gws.GwsError(500, "props update failed")
+
+    monkeypatch.setattr(build.assets, "publish_image", fake_publish)
+    with pytest.raises(build.BuildError, match="props update failed"):
+        build.build(html, "T")
+    assert google.writes[-1] == ("revoke", ["Fhalf"], {"Fhalf": "permH"})
+    meta = json.loads((build.OUT / "my-deck" / "build.json").read_text())
+    assert meta["shared_assets"] == ["Fhalf"] and meta["revoked"] == ["Fhalf"]
+
+
+def test_revoke_ignores_shares_from_earlier_builds(google, fake_compile, html, monkeypatch):
+    build.assets.SHARE_LOG.append(("Fold", "permOld"))  # an earlier build in this process
+    res = build.build(html, "T")
+    assert not any(w[0] == "revoke" for w in google.writes)  # nothing shared, nothing to revoke
+    meta = json.loads((res.out_dir / "build.json").read_text())
+    assert meta["revoked"] == [] and meta["revoke_failed"] == [] and meta["shared"] == []
+
+
+def test_revoke_failure_does_not_fail_build(google, fake_compile, html, monkeypatch, capsys):
+    _publishing(monkeypatch, fake_compile, google)
+    monkeypatch.setattr(build.assets, "revoke",
+                        lambda ids, perms=None: (["F1"], [{"file": "F2", "error": "gws error 500: backend"}]))
+    res = build.build(html, "T")
+    meta = json.loads((res.out_dir / "build.json").read_text())
+    assert meta["status"] == "done"
+    assert meta["revoked"] == ["F1"]
+    assert meta["revoke_failed"] == [{"file": "F2", "error": "gws error 500: backend"}]
+    assert "F2" in capsys.readouterr().err
+
+    from gslider import check as C
+    rep = C.write_report(res.out_dir / "report.md", "copy1", {"slides": []}, [], C.CheckResult(), meta)
+    text = rep.read_text()
+    assert "Sharing not removed" in text and "F2" in text and "gslider unshare-assets" in text
+    assert "- F1 (link removed)" in text
+
+
+def test_revoke_crash_does_not_fail_build(google, fake_compile, html, monkeypatch):
+    _publishing(monkeypatch, fake_compile, google)
+
+    def crash(ids, perms=None):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(build.assets, "revoke", crash)
+    res = build.build(html, "T")
+    meta = json.loads((res.out_dir / "build.json").read_text())
+    assert meta["status"] == "done" and meta["revoked"] == []
+    assert [f["file"] for f in meta["revoke_failed"]] == ["F1", "F2"]
+    assert "boom" in meta["revoke_failed"][0]["error"]
+
+
+def test_plates_published_with_plate_kind(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(build, "logo_files", lambda: {})
+    monkeypatch.setattr(build.assets, "publish_image",
+                        lambda data, mime, name, kind=None: calls.append((name, kind)) or "https://u?id=P1")
+    png = tmp_path / "p.png"
+    png.write_bytes(b"\x89PNG")
+    build.publish_assets({"plate:1"}, {"slides": []}, tmp_path / "d.html", "", "deck", tmp_path, False,
+                         plates={1: png})
+    assert calls == [("deck slide 01 plate.png", "plate")]
+
+
+def test_cli_build_prints_revoke_result(monkeypatch, tmp_path, capsys):
+    res = build.BuildResult("p", "u", [], tmp_path, revoked=["a", "b"], revoke_failed=[{"file": "c", "error": "x"}])
+    monkeypatch.setattr(build, "build", lambda *a, **k: res)
+    p = tmp_path / "d.html"
+    p.write_text("<html></html>")
+    assert cli.main(["build", str(p)]) == 0
+    out = capsys.readouterr()
+    assert "link sharing removed from 2 asset files" in out.out
+    assert "c" in out.err and "gslider unshare-assets" in out.err
+
+
+def test_cli_unshare_assets(monkeypatch, capsys):
+    seen = []
+    monkeypatch.setattr(build.assets, "unshare_all", lambda purge_plates=False: seen.append(purge_plates) or {
+        "files": 5, "revoked": 3, "private": 2, "purged": 1, "failed": []})
+    assert cli.main(["unshare-assets", "--purge-plates"]) == 0
+    assert seen == [True]
+    out = capsys.readouterr().out
+    assert "5 asset files" in out and "removed from 3" in out and "1 plate" in out
+    monkeypatch.setattr(build.assets, "unshare_all", lambda purge_plates=False: {
+        "files": 1, "revoked": 0, "private": 0, "purged": 0, "failed": [{"file": "z", "error": "e"}]})
+    assert cli.main(["unshare-assets"]) == 1
+    assert "z" in capsys.readouterr().err
