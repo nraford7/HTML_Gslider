@@ -6,11 +6,13 @@ Block kinds (fields):
   rows{header:[str]|None, rows:[[str]], style:"table"|"timeline", widths:[float|None],
        bold:[[[[start, length]]]] (row -> cell -> ranges), header_bold:[[[start, length]]]|None}
   band{label, text}
-  image{sha256, mime, data:bytes}
+  image{sha256, mime, data:bytes}   (a data URI)
+  image{src}                    (a linked image: a path or URL, no bytes yet; build resolves it
+                                 with gslider.fetch in template style, or turns it into an
+                                 unknown block with the reason)
   unknown{cls, text}            (images that cannot be placed natively are unknown blocks:
-                                 cls "external-image <src>" with text = src, or
                                  cls "bad-image: malformed data URI" with that text, or
-                                 cls "inline-image <mime>" for a data image inside a cell)
+                                 cls "inline-image <mime or src>" for an image inside a cell)
   field{role, text}            (cover / closing slides only)
 Optional extras: `width` (0.6 for a `w60` class) on any block; `bold` on a text
 block or band: [(start, length)] ranges on its `text`; on a cell: {field: ranges}
@@ -204,13 +206,13 @@ def _has_content(el) -> bool:
 # ---------------------------------------------------------------- images
 
 def _image_from_src(src: str) -> dict | None:
-    """Image block for a data URI; an `unknown` block for an external or malformed source
-    (compile cannot place those, so the slide falls back with the src in its reason)."""
+    """Image block for a data URI; a linked `image{src}` block for any other source; an
+    `unknown` block for a malformed data URI (the slide falls back with that reason)."""
     src = src.strip()
     if not src or src.startswith("#"):
         return None
     if not src.lower().startswith("data:"):
-        return {"kind": "unknown", "cls": f"external-image {src}", "text": src}
+        return {"kind": "image", "src": src}
     m = _DATA.fullmatch(src)
     try:
         if not m:
@@ -242,7 +244,7 @@ def _image_of(el) -> dict | None:
 
 
 def _images(el) -> list[dict]:
-    """Image blocks (or external / malformed image `unknown` blocks) for el and its descendants."""
+    """Image blocks (or malformed image `unknown` blocks) for el and its descendants."""
     found = []
     for e in [el, *el.find_all(True)]:
         if e.name == "img" or _classes(e) & IMAGE_CLS:
@@ -253,8 +255,9 @@ def _images(el) -> list[dict]:
 
 
 def _image_key(b: dict) -> tuple:
-    """What identifies a placed image: extras such as `width` do not."""
-    return b["kind"], b.get("sha256"), b.get("cls"), b.get("text")
+    """What identifies a placed image: extras such as `width` do not. `src` keeps two linked
+    images apart (neither has a sha256 yet)."""
+    return b["kind"], b.get("sha256"), b.get("src"), b.get("cls"), b.get("text")
 
 
 def _unplaced_images(blocks: list[dict], slide, exclude: list[Tag]) -> list[dict]:
@@ -277,6 +280,8 @@ def _unplaced_images(blocks: list[dict], slide, exclude: list[Tag]) -> list[dict
             hit = next((i for i, k in enumerate(pool) if k == key), None)
             if hit is not None:
                 pool.pop(hit)
+            elif img["kind"] == "image" and img.get("src"):
+                out.append({"kind": "unknown", "cls": f"inline-image {img['src']}", "text": img["src"]})
             elif img["kind"] == "image":
                 out.append({"kind": "unknown", "cls": f"inline-image {img['mime']}",
                             "text": f"image {img['mime']}"})
@@ -499,7 +504,7 @@ def _blocks_inner(el, cls: set[str]) -> list[dict]:
         return []
     if cls & IMAGE_CLS or el.name == "img":
         img = _image_of(el)
-        return [img] if img else []  # an unknown block for an external / malformed source
+        return [img] if img else []  # an unknown block for a malformed source
     if "content-header" in cls:
         return _run_blocks(el, lambda c: [_text_block("title", c)] if c.name in ("h1", "h2") else _blocks(c))
     if el.name in ("h1", "h2"):
@@ -556,7 +561,7 @@ def _cover_blocks(slide) -> list[dict]:
                 if extra:
                     blocks.append({"kind": "unknown", "cls": " ".join(c.get("class") or [c.name]),
                                    "text": extra.replace("\n", " ")})
-    blocks += _images(slide)  # external / malformed sources arrive as unknown blocks
+    blocks += _images(slide)  # malformed sources arrive as unknown blocks
     return blocks
 
 
@@ -629,7 +634,7 @@ def parse(html: str, include_internal: bool = False, source: str | None = None,
         blocks = _cover_blocks(slide) if kind != "content" else _content_blocks(slide, drop)
         background = _image_from_style(slide.get("style", ""))
         if background is not None and background["kind"] != "image":
-            blocks.append(background)  # external / malformed background: the slide falls back
+            blocks.append(background)  # malformed background: the slide falls back
             background = None
         slides.append({
             "n": len(slides) + 1,

@@ -7,6 +7,8 @@ Box.h is the text-area height without insets (the element is h + 2 * inset tall)
 SlidePlan = {n, slide_id, html_id, ground, notes_text, status, reason, requests,
              boxes, missing_assets}
 Box = {object_id, role, ground, x, y, w, h, text, lines}
+Table Box (role "table") adds rows, cols; x/y/w/h are the table element's edges (h is the
+full table height) and text is every non-empty cell, "\n"-joined.
 `missing_assets` lists asset keys (sha256, "logo", "logo_dark", "fallback:<n>") the
 plan needed but `assets` did not hold; those images are left out of `requests`.
 """
@@ -37,6 +39,12 @@ def rgb(hexstr: str) -> dict:
     return {k: int(h[i:i + 2], 16) / 255 for k, i in (("red", 0), ("green", 2), ("blue", 4))}
 
 
+def _blend(fg: str, bg: str, alpha: float) -> dict:
+    """rgbColor of fg drawn at alpha over bg."""
+    f, g = rgb(fg), rgb(bg)
+    return {k: f[k] * alpha + g[k] * (1 - alpha) for k in f}
+
+
 def u16(s: str) -> int:
     """Slides text indexes count UTF-16 code units."""
     return len(s.encode("utf-16-le")) // 2
@@ -45,10 +53,19 @@ def u16(s: str) -> int:
 IMAGE_FORMATS = {"image/png": "PNG", "image/jpeg": "JPEG", "image/jpg": "JPEG", "image/gif": "GIF"}
 MAX_IMAGE_BYTES = 50 * 1024 * 1024  # Slides createImage limits
 MAX_IMAGE_PIXELS = 25_000_000
+MIN_COL_EMU = 406400  # Slides refuses table columns under 32pt
+CELL_PAD = 7.2  # Slides' default table cell padding (0.1in each side), pt
+
+
+def _unresolved(img: dict) -> None:
+    """ValueError for a linked image build did not resolve (or was not asked to)."""
+    if img.get("src") and img.get("data") is None:
+        raise ValueError(f"linked image {img['src']} not resolved")
 
 
 def _aspect(img: dict) -> float:
     """Width / height of an image Slides can insert; ValueError (slide falls back) otherwise."""
+    _unresolved(img)
     mime, data = img.get("mime"), img.get("data")
     fmt = IMAGE_FORMATS.get(mime)
     if fmt is None:
@@ -307,7 +324,8 @@ def _cells(s: _Slide, b: dict, y: float) -> float:
     return bottom
 
 
-def _col_layout(layout: Layout, widths: list, ncols: int) -> list[tuple[float, float]]:
+def _ratios(widths: list, ncols: int) -> list[float]:
+    """Column shares summing to 1: declared widths (scaled down when over 100%), the rest split evenly."""
     ws = list(widths or [])[:ncols] + [None] * max(0, ncols - len(widths or []))
     known = sum(w for w in ws if w)
     if known > 1:  # declared widths over 100%: scale them to fit
@@ -317,15 +335,27 @@ def _col_layout(layout: Layout, widths: list, ncols: int) -> list[tuple[float, f
     if free:
         share = (1 - known) / len(free)
         ws = [w if w else share for w in ws]
-    total, gutter = layout.title["w"], layout.table.get("gutter", 18)
-    out, x = [], layout.margin
-    for i, r in enumerate(ws):
-        cw = r * total
-        tw = cw - (gutter if i < ncols - 1 else 0)
-        if tw < layout.min_col:
-            raise ValueError(f"table column {i + 1} is {tw:.0f}pt wide (< {layout.min_col:g}pt)")
-        out.append((x, tw))
-        x += cw
+    total = sum(ws)
+    return [w / total for w in ws] if total > 0 else [1 / ncols] * ncols
+
+
+def _table_widths(widths: list, ncols: int, total: int) -> list[int]:
+    """Column widths in EMU from width ratios: each at least 32pt, summing to `total` exactly."""
+    if ncols * MIN_COL_EMU > total:
+        raise ValueError(f"table of {ncols} columns does not fit: {ncols} x 32pt > {total / EMU_PER_PT:.0f}pt")
+    r = _ratios(widths, ncols)
+    fixed: set[int] = set()
+    while True:
+        room = total - MIN_COL_EMU * len(fixed)
+        share = sum(r[i] for i in range(ncols) if i not in fixed)
+        ws = [MIN_COL_EMU if i in fixed else (r[i] / share * room if share else room / (ncols - len(fixed)))
+              for i in range(ncols)]
+        narrow = {i for i in range(ncols) if i not in fixed and ws[i] < MIN_COL_EMU}
+        if not narrow:
+            break
+        fixed |= narrow
+    out = [int(w) for w in ws]
+    out[max(range(ncols), key=lambda i: out[i])] += total - sum(out)
     return out
 
 
@@ -339,29 +369,17 @@ def _rows(s: _Slide, b: dict, y: float, compact: bool) -> float:
     L = s.L
     pad = L.rows_compact["pad"] if compact else L.row_pad
     pmin = L.rows_compact["pitch_min"] if compact else L.rows["pitch_min"]
+    if b.get("style") != "timeline":  # tables (and rows blocks with no style) become native tables
+        return _table(s, b, y, pmin)
     bold = b.get("bold") or []
-    if b.get("style") == "timeline":
-        r = L.rows
-        cols = [(r["label_x"], r["text_x"] - r["label_x"] - 12),
-                (r["text_x"], L.margin + L.title["w"] - r["text_x"])]
-        rows = []
-        for i, row in enumerate(b["rows"]):
-            rows.append([("number", r["num_x"], r["label_x"] - r["num_x"] - 8, str(i + 1), ())]
-                        + [(("header", "body")[j], x, w, t, _cell_bold(bold, i, j))
-                           for j, ((x, w), t) in enumerate(zip(cols, row))])
-    else:
-        ncols = max([len(b["header"] or [])] + [len(rw) for rw in b["rows"]])
-        cols = _col_layout(L, b.get("widths"), ncols)
-        if b["header"]:
-            hb = b.get("header_bold") or []
-            hs = [_bottom(s.text("colhead", x, y, w, t, bold=hb[j] if j < len(hb) else ()), L) - y
-                  for j, ((x, w), t) in enumerate(zip(cols, b["header"])) if t]
-            rule_y = y + max(hs + [0]) + L.table["head_to_rule"]
-            s.rule(L.margin, rule_y, L.title["w"])
-            y = rule_y + L.table["rule_to_row"]
-        rows = [[(("number" if j == 0 else "body"), x, w, t, _cell_bold(bold, i, j))
-                 for j, ((x, w), t) in enumerate(zip(cols, rw))]
-                for i, rw in enumerate(b["rows"])]
+    r = L.rows
+    cols = [(r["label_x"], r["text_x"] - r["label_x"] - 12),
+            (r["text_x"], L.margin + L.title["w"] - r["text_x"])]
+    rows = []
+    for i, row in enumerate(b["rows"]):
+        rows.append([("number", r["num_x"], r["label_x"] - r["num_x"] - 8, str(i + 1), ())]
+                    + [(("header", "body")[j], x, w, t, _cell_bold(bold, i, j))
+                       for j, ((x, w), t) in enumerate(zip(cols, row))])
     bottom = y
     for i, row in enumerate(rows):
         if i:
@@ -373,6 +391,100 @@ def _rows(s: _Slide, b: dict, y: float, compact: bool) -> float:
         bottom = y + tallest
         y += max(tallest + pad, pmin)
     return bottom
+
+
+def _table(s: _Slide, b: dict, y: float, pmin: float) -> float:
+    """Native Slides table whose first-row text top is y and whose cell text lines up with the
+    margin; returns the last row's text bottom (the table edge less the cell padding)."""
+    L, pad = s.L, CELL_PAD
+    bold = b.get("bold") or []
+    header = b.get("header") or []
+    ncols = max([len(header)] + [len(rw) for rw in b["rows"]])
+    grid = ([[(t, "colhead", list(hb) if hb else []) for t, hb in
+              zip(header, list(b.get("header_bold") or []) + [()] * len(header))]] if header else [])
+    grid += [[(t, "body", _cell_bold(bold, i, j)) for j, t in enumerate(rw)] for i, rw in enumerate(b["rows"])]
+    grid = [row + [("", "body", [])] * (ncols - len(row)) for row in grid]
+    x, w = L.margin - pad, L.title["w"] + 2 * pad
+    cols = _table_widths(b.get("widths"), ncols, emu(w))
+    heights = []
+    for i, row in enumerate(grid):
+        text_h = max([s.measure(role, t.split("\n"), cw / EMU_PER_PT - 2 * pad)[1]
+                      for (t, role, _), cw in zip(row, cols) if t] + [0])
+        rh = text_h + 2 * pad
+        heights.append(rh if header and i == 0 else max(rh, pmin))
+    oid = s.oid("table")
+    top = y - pad
+    total_h = sum(heights)
+    r = L.rule
+    reqs = [{"createTable": {"objectId": oid, "rows": len(grid), "columns": ncols,
+                             "elementProperties": s.props(x, top, w, total_h)}}]
+    reqs += [{"updateTableColumnProperties": {
+        "objectId": oid, "columnIndices": [j],
+        "tableColumnProperties": {"columnWidth": {"magnitude": cw, "unit": "EMU"}},
+        "fields": "columnWidth"}} for j, cw in enumerate(cols)]
+    reqs += [{"updateTableRowProperties": {
+        "objectId": oid, "rowIndices": [i],
+        "tableRowProperties": {"minRowHeight": {"magnitude": emu(h), "unit": "EMU"}},
+        "fields": "minRowHeight"}} for i, h in enumerate(heights)]
+    line = {"color": {"rgbColor": rgb(r["color"])}}
+    # Slides accepts table-border alpha 0 or 1 only: the inner rules are opaque, in the rule colour
+    # pre-blended at its alpha over the slide's ground (what a translucent rule would show)
+    inner = {"color": {"rgbColor": _blend(r["color"], L.grounds[s.ground], r["alpha"])}}
+    border_fields = "tableBorderFill.solidFill.color,tableBorderFill.solidFill.alpha,weight,dashStyle"
+    reqs += [
+        {"updateTableBorderProperties": {"objectId": oid, "borderPosition": "ALL", "tableBorderProperties": {
+            "tableBorderFill": {"solidFill": {**inner, "alpha": 1}},
+            "weight": {"magnitude": r["weight"], "unit": "PT"}, "dashStyle": "SOLID"},
+            "fields": border_fields}},
+        {"updateTableBorderProperties": {"objectId": oid, "borderPosition": "OUTER", "tableBorderProperties": {
+            "tableBorderFill": {"solidFill": {**line, "alpha": 0}}},
+            "fields": "tableBorderFill.solidFill.color,tableBorderFill.solidFill.alpha"}},
+        {"updateTableBorderProperties": {"objectId": oid, "borderPosition": "INNER_VERTICAL",
+                                         "tableBorderProperties": {
+                                             "tableBorderFill": {"solidFill": {**line, "alpha": 0}}},
+                                         "fields": "tableBorderFill.solidFill.color,tableBorderFill.solidFill.alpha"}},
+        {"updateTableCellProperties": {
+            "objectId": oid,
+            "tableCellProperties": {"tableCellBackgroundFill": {"propertyState": "NOT_RENDERED"}},
+            "fields": "tableCellBackgroundFill.propertyState"}},
+    ]
+    texts = []
+    for i, row in enumerate(grid):
+        for j, (t, role, rng) in enumerate(row):
+            if not t:
+                continue
+            texts.append(t)
+            loc = {"rowIndex": i, "columnIndex": j}
+            st = s.style(role)
+            reqs += [
+                {"insertText": {"objectId": oid, "cellLocation": loc, "insertionIndex": 0, "text": t}},
+                {"updateTextStyle": {
+                    "objectId": oid, "cellLocation": loc, "textRange": {"type": "ALL"},
+                    "style": {"fontFamily": st["font"],
+                              "weightedFontFamily": {"fontFamily": st["font"], "weight": st["weight"]},
+                              "fontSize": {"magnitude": st["size"], "unit": "PT"},
+                              "foregroundColor": {"opaqueColor": {"rgbColor": rgb(st["color"])}},
+                              "bold": False, "italic": False},
+                    "fields": "fontFamily,weightedFontFamily,fontSize,foregroundColor,bold,italic"}},
+                {"updateParagraphStyle": {
+                    "objectId": oid, "cellLocation": loc, "textRange": {"type": "ALL"},
+                    "style": {"lineSpacing": st["line_spacing"],
+                              "spaceAbove": {"magnitude": 0, "unit": "PT"},
+                              "spaceBelow": {"magnitude": st["space_after"], "unit": "PT"}},
+                    "fields": "lineSpacing,spaceAbove,spaceBelow"}},
+            ]
+            for start, length in rng:
+                if length <= 0 or start < 0 or start + length > len(t):
+                    raise ValueError(f"bold range {start},{length} outside table cell text")
+                reqs.append({"updateTextStyle": {
+                    "objectId": oid, "cellLocation": loc,
+                    "textRange": {"type": "FIXED_RANGE", "startIndex": u16(t[:start]),
+                                  "endIndex": u16(t[:start + length])},
+                    "style": {"bold": True}, "fields": "bold"}})
+    s.reqs += reqs
+    s.boxes.append({"object_id": oid, "role": "table", "ground": s.ground, "x": x, "y": top, "w": w,
+                    "h": total_h, "text": "\n".join(texts), "lines": len(grid), "rows": len(grid), "cols": ncols})
+    return top + total_h - pad
 
 
 def _band(s: _Slide, b: dict, y: float) -> float:
@@ -533,6 +645,9 @@ def compile_slide(slide: dict, layout: Layout, assets: dict, ground: str, logo: 
     for compact in (False, True):
         s = _Slide(n, ground, layout, assets, logo)
         try:
+            for img in [*slide["blocks"], slide.get("background") or {}]:
+                if img.get("kind") == "image":
+                    _unresolved(img)
             if slide["kind"] in ("cover", "closing"):
                 _cover(s, slide)
             else:

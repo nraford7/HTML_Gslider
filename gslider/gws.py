@@ -167,11 +167,40 @@ def drive_upload(path, name: str, folder_id: str, app_properties: dict) -> str:
                            cwd=str(p.parent)), "drive upload")
 
 
-def drive_share_anyone(file_id: str) -> None:
+def drive_share_anyone(file_id: str) -> str | None:
+    """Share view-only with anyone who has the link; returns the new permission's id."""
     refuse_protected(file_id)
-    call("drive", "permissions", "create",
-         "--params", _j({"fileId": file_id}),
-         "--json", _j({"type": "anyone", "role": "reader"}))
+    data = call("drive", "permissions", "create",
+                "--params", _j({"fileId": file_id}),
+                "--json", _j({"type": "anyone", "role": "reader"}))
+    return data.get("id") or None
+
+
+def drive_permissions(file_id: str) -> list[dict]:
+    """Every permission on a file (id, type, role), all pages."""
+    perms: list[dict] = []
+    token = None
+    while True:
+        params = {"fileId": file_id, "pageSize": 100, "fields": "nextPageToken,permissions(id,type,role)"}
+        if token:
+            params["pageToken"] = token
+        data = call("drive", "permissions", "list", "--params", _j(params))
+        perms.extend(data.get("permissions", []))
+        token = data.get("nextPageToken")
+        if not token:
+            return perms
+
+
+def drive_unshare(file_id: str, perm_id: str) -> None:
+    """Delete one permission from a file."""
+    refuse_protected(file_id)
+    call("drive", "permissions", "delete", "--params", _j({"fileId": file_id, "permissionId": perm_id}))
+
+
+def drive_delete(file_id: str) -> None:
+    """Delete a file for good (not to the trash)."""
+    refuse_protected(file_id)
+    call("drive", "files", "delete", "--params", _j({"fileId": file_id}))
 
 
 def drive_update_props(file_id: str, app_properties: dict) -> None:
