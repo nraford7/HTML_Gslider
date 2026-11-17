@@ -439,10 +439,10 @@ def test_escaped_quote_in_selector_does_not_hide_urls(folder):
     assert 'url("data:image/png;base64,' in out
 
 
-def test_bad_url_becomes_none_and_later_urls_rewritten(folder, tmp_path):
+def test_bad_url_stays_bad_and_later_urls_rewritten(folder, tmp_path):
     secret = (tmp_path / "secret" / "s.png").as_uri()
     out = _style(_clean(f"<style>.a{{background:url(a\"b)}} .b{{background:url({secret})}}</style>", folder))
-    assert "secret" not in out and "gslider-bad-url" in out and "background:none" in out
+    assert "secret" not in out and "url(gslider bad)" in out and "background:none" in out
 
 
 def test_escaped_image_set_strings_rewritten(folder, tmp_path):
@@ -687,12 +687,19 @@ def test_image_set_with_var_or_env_becomes_none(folder, tmp_path):
         assert "image-set" not in out and "background:none" in out, out
 
 
-def test_svg_animations_of_css_urls_removed(folder):
+def test_svg_animations_of_css_urls_rewritten(folder):
     out = _clean("<svg><rect><set attributeName='mask' to='url(http://127.0.0.1/a.png)'/>"
-                 "<animate attributeName='clip-path' values='url(a.png);url(b.png)' dur='1s'/>"
-                 "<animate attributeName='opacity' values='0;1' dur='1s'/></rect></svg>", folder)
+                 "<animate attributeName='clip-path' values='url(a.png);url(#c)' dur='1s'/>"
+                 "<set attributeName='fill' to='blue'/><animate attributeName='opacity' values='0;1' dur='1s'/>"
+                 "<animateColor attributeName='fill' to='url(http://x/a.png)'/>"
+                 "<set attributeName='href' to='x.svg'/></rect></svg>", folder)
+    assert "127.0.0.1" not in out and "a.png" not in out and "http://x" not in out and "x.svg" not in out
     soup = sanitize.parse(out)
-    assert not soup.find("set") and [a.get("attributeName") or a.get("attributename") for a in soup.find_all("animate")] == ["opacity"]
+    anims = {(a.name, a.get("attributeName")): a for a in soup.find_all(lambda t: t.name.lower() in
+                                                                         ("set", "animate", "animatecolor"))}
+    assert anims[("set", "fill")]["to"] == "blue" and anims[("animate", "opacity")]["values"] == "0;1"
+    assert anims[("animate", "clip-path")]["values"] == 'none;url("#c")'
+    assert anims[("set", "mask")]["to"] == "none"
 
 
 @pytest.mark.parametrize("attr", ["stroke", "clip-path", "mask", "filter", "marker-start", "cursor"])
@@ -703,7 +710,7 @@ def test_svg_presentation_attributes_rewritten(folder, tmp_path, attr):
 
 def test_bad_url_keeps_declaration_invalid(folder):
     out = _style(_clean('<style>.a{background:red;background:url(a"b)}</style>', folder))
-    assert "background:red" in out and "gslider-bad-url" in out
+    assert "background:red" in out and "url(gslider bad)" in out
 
 
 def test_font_face_flag_ends_at_semicolon(folder):
@@ -720,3 +727,23 @@ def test_import_without_target_dropped(folder):
 def test_deep_css_nesting_is_unsafe_page(folder):
     with pytest.raises(sanitize.UnsafePage):
         _clean("<style>a{b:" + "(" * 3000 + ")" * 3000 + "}</style>", folder)
+
+
+def test_custom_function_in_image_set_becomes_none(folder):
+    refused = []
+    css = '@function --f() { result: "../secret/s.png"; } .t{background:image-set(--f() 1x)}'
+    out = _style(_clean(f"<style>{css}</style>", folder, refused))
+    assert "image-set" not in out and any("image-set" in r["src"] for r in refused)
+
+
+def test_deep_nesting_inside_image_set_is_unsafe_page(folder):
+    with pytest.raises(sanitize.UnsafePage):
+        _clean("<style>a{b:image-set(" + "(" * 3000 + ")" * 3000 + ")}</style>", folder)
+
+
+@pytest.mark.parametrize("css", ["ul{list-style:square} ul{list-style:url(my img.png)}",
+                                 "p{font-family:Inter} p{font-family:url(a b)}",
+                                 "a{--x:url(a b);background:var(--x,lime)}"])
+def test_bad_url_never_becomes_a_valid_word(folder, css):
+    out = _style(_clean(f"<style>{css}</style>", folder))
+    assert out.count("url(gslider bad)") == 1

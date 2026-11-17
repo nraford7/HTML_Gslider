@@ -32,10 +32,12 @@ What it does:
   every string and url quoted with `"`, `\\`, newline and `<` escaped, a `<` delimiter
   never directly before a letter, `/`, `!` or `?`. So style text has no `<` that could
   open a tag (bs4 writes style text raw, and inside SVG or MathML Chrome would read one).
-  A bad url (`url(a"b)`) loads nothing in Chrome and becomes an unknown word, so its
-  declaration stays invalid. An `image-set()` holding `var()`, `env()` or `attr()` becomes
-  `none` (the string it would load is not visible here). SVG animations (`set`, `animate`,
-  ...) of an href or of a CSS url attribute are removed.
+  A bad url (`url(a"b)`) loads nothing in Chrome; it becomes the bad url
+  `url(gslider bad)`, so its declaration stays invalid. An `image-set()` holding `var()`,
+  `env()`, `attr()`, `inherit()` or a custom function becomes `none` (refused; the string it
+  would load is not visible here). SVG animations (`set`, `animate`, ...) of an href, a src
+  or style are removed; for a CSS url attribute their `to`, `from`, `by` and `values` go
+  through the same CSS rewrite.
 - The deck is parsed with html5lib (a WHATWG HTML5 parser, much closer to Chrome than
   html.parser), so `<!-->` and similar cannot hide markup. Comments, CDATA, processing
   instructions, every `<meta http-equiv>`, the MathML `mglyph` / `malignmark`, and `noscript`,
@@ -94,7 +96,8 @@ _CSS_ATTRS = ("style", "fill", "stroke", "clip-path", "mask", "filter", "marker-
               "marker-end", "cursor")
 _TAG_START = re.compile(r"[A-Za-z/!?]")
 _IMAGE_SET = ("image-set", "-webkit-image-set")
-_SUBSTITUTED = ("var", "env", "attr")
+_ANIMATE_TAGS = ("set", "animate", "animatetransform", "animatemotion", "animatecolor")
+_SUBSTITUTED = ("var", "env", "attr", "inherit")  # and every custom function (--name())
 _SURROGATE = re.compile("[\ud800-\udfff]")
 _CLOSERS = {"}": "}", ")": ")", "]": "]"}
 _FONT_MAGIC = (b"wOF2", b"wOFF", b"\x00\x01\x00\x00", b"OTTO", b"true")
@@ -207,11 +210,15 @@ def _has_url(nodes, level: int = 0) -> bool:
     return False
 
 
-def _has_fn(nodes, names) -> bool:
+def _has_fn(nodes, names, level: int = 0) -> bool:
+    """A function in names, or a custom function (`--f()`), anywhere in nodes."""
+    if level > MAX_CSS_DEPTH:
+        raise UnsafePage(f"CSS nested deeper than {MAX_CSS_DEPTH} levels")
     for n in nodes:
-        if n.type == "function" and (n.lower_name in names or _has_fn(n.arguments, names)):
+        if n.type == "function" and (n.lower_name in names or n.lower_name.startswith("--")
+                                     or _has_fn(n.arguments, names, level + 1)):
             return True
-        if n.type in ("() block", "[] block", "{} block") and _has_fn(n.content, names):
+        if n.type in ("() block", "[] block", "{} block") and _has_fn(n.content, names, level + 1):
             return True
     return False
 
@@ -280,7 +287,9 @@ def _css(css: str, ctx: _Ctx, rel_dir: str = "", depth: int = 0) -> str:
                 arg = url_arg(n)
                 piece = url_in(arg, font) if arg is not None else "none"
             elif t == "function" and n.lower_name in _IMAGE_SET and _has_fn(n.arguments, _SUBSTITUTED):
-                piece = "none"  # var()/env()/attr() can hand image-set a string we cannot see
+                ctx.refuse(f"{n.name}({tinycss2.serialize(n.arguments)[:80]})",
+                           "image-set() fed by var(), env(), attr() or a custom function is not loaded")
+                piece = "none"  # the string it would load is not visible here
             elif t == "function":
                 inner = write(n.arguments, font, n.lower_name in _IMAGE_SET, level + 1)
                 piece = _leaf(tinycss2.ast.IdentToken(0, 0, n.name)) + "(" + inner + ")"
@@ -290,8 +299,8 @@ def _css(css: str, ctx: _Ctx, rel_dir: str = "", depth: int = 0) -> str:
             elif t in ("() block", "[] block"):
                 piece = n.type[0] + write(n.content, font, image_set, level + 1) + n.type[1]
             elif t == "error":
-                # a bad url makes its declaration invalid in Chrome; an unknown word does the same
-                piece = _CLOSERS.get(n.kind) or (" gslider-bad-url " if n.kind == "bad-url" else " ")
+                # a bad url makes its declaration invalid in Chrome; write one that loads nothing
+                piece = _CLOSERS.get(n.kind) or ("url(gslider bad)" if n.kind == "bad-url" else " ")
             elif t == "literal" and n.value in ("<!--", "-->"):
                 piece = ""
             else:
@@ -416,10 +425,14 @@ def _sanitize_soup(soup: BeautifulSoup, ctx: _Ctx) -> None:
     for tag in soup.find_all("meta"):
         if any(a.lower() == "http-equiv" for a in tag.attrs):
             tag.decompose()
-    for tag in soup.find_all(["set", "animate", "animatetransform", "animatemotion", "animatecolor"]):
-        if (tag.get("attributename") or tag.get("attributeName") or "").lower() in (
-                "href", "xlink:href", "src", *_CSS_ATTRS):
+    for tag in soup.find_all(lambda t: t.name.lower() in _ANIMATE_TAGS):
+        target = (tag.get("attributename") or tag.get("attributeName") or "").strip().lower()
+        if target in ("href", "xlink:href", "src", "style"):
             tag.decompose()
+        elif target in _CSS_ATTRS:
+            for a in ("to", "from", "by", "values"):
+                if isinstance(tag.get(a), str) and _has_url(tinycss2.parse_component_value_list(tag[a])):
+                    tag[a] = _css(tag[a], ctx)
 
     for link in soup.find_all("link"):
         rel = [r.lower() for r in (link.get("rel") or [])]
