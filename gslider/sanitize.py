@@ -27,11 +27,15 @@ What it does:
 - Other URL attributes (media `src`, `use` to another file, form actions, ...) are removed.
 - CSS is read with tinycss2 (the CSS Syntax spec tokenizer Chrome follows), so escapes
   (`\\75 rl(`, `image\\2d set(`), comments, strings and bad urls mean what they mean to
-  Chrome. The CSS is written back from the tokens: comments and `<!--` / `-->` dropped,
+  Chrome. The CSS is written back from the tokens: comment text dropped (`/**/` kept so
+  tokens stay apart), `<!--` / `-->` dropped,
   every string and url quoted with `"`, `\\`, newline and `<` escaped, a `<` delimiter
   never directly before a letter, `/`, `!` or `?`. So style text has no `<` that could
   open a tag (bs4 writes style text raw, and inside SVG or MathML Chrome would read one).
-  A bad url (`url(a"b)`) loads nothing in Chrome and becomes `none`.
+  A bad url (`url(a"b)`) loads nothing in Chrome and becomes an unknown word, so its
+  declaration stays invalid. An `image-set()` holding `var()`, `env()` or `attr()` becomes
+  `none` (the string it would load is not visible here). SVG animations (`set`, `animate`,
+  ...) of an href or of a CSS url attribute are removed.
 - The deck is parsed with html5lib (a WHATWG HTML5 parser, much closer to Chrome than
   html.parser), so `<!-->` and similar cannot hide markup. Comments, CDATA, processing
   instructions, every `<meta http-equiv>`, the MathML `mglyph` / `malignmark`, and `noscript`,
@@ -76,6 +80,7 @@ FONT_CSS_HOST = "fonts.googleapis.com"
 FONT_FILE_HOST = "fonts.gstatic.com"
 MAX_IMPORT_DEPTH = 4
 MAX_ROUNDS = 4
+MAX_CSS_DEPTH = 200
 
 _DROP_TAGS = ("script", "iframe", "frame", "frameset", "object", "embed", "portal", "applet", "base", "noembed",
               "mglyph", "malignmark", "noscript", "noframes", "fencedframe")
@@ -88,6 +93,8 @@ _IMAGE_HREF_TAGS = ("image", "feimage")
 _CSS_ATTRS = ("style", "fill", "stroke", "clip-path", "mask", "filter", "marker-start", "marker-mid",
               "marker-end", "cursor")
 _TAG_START = re.compile(r"[A-Za-z/!?]")
+_IMAGE_SET = ("image-set", "-webkit-image-set")
+_SUBSTITUTED = ("var", "env", "attr")
 _SURROGATE = re.compile("[\ud800-\udfff]")
 _CLOSERS = {"}": "}", ")": ")", "]": "]"}
 _FONT_MAGIC = (b"wOF2", b"wOFF", b"\x00\x01\x00\x00", b"OTTO", b"true")
@@ -176,9 +183,9 @@ def _is_font_css(url: str) -> bool:
 
 
 def _quoted(text: str) -> str:
-    """A CSS string for text: `"`, `\\`, newline and `<` escaped."""
+    """A CSS string for text: `"`, `\\`, newline, CR, form feed and `<` escaped."""
     return '"' + (text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\a ")
-                  .replace("<", "\\3c ")) + '"'
+                  .replace("\r", "\\d ").replace("\f", "\\c ").replace("<", "\\3c ")) + '"'
 
 
 def _leaf(node) -> str:
@@ -186,15 +193,25 @@ def _leaf(node) -> str:
     return node.serialize().replace("\\<", "\\3c ")
 
 
-def _has_url(nodes) -> bool:
+def _has_url(nodes, level: int = 0) -> bool:
+    if level > MAX_CSS_DEPTH:
+        raise UnsafePage(f"CSS nested deeper than {MAX_CSS_DEPTH} levels")
     for n in nodes:
         if n.type == "url" or (n.type == "error" and n.kind == "bad-url"):
             return True
         if n.type == "function" and n.lower_name in ("url", "image-set", "-webkit-image-set"):
             return True
-        if n.type in ("function", "() block", "[] block", "{} block") and _has_url(n.arguments
-                                                                                   if n.type == "function"
-                                                                                   else n.content):
+        if n.type in ("function", "() block", "[] block", "{} block") and _has_url(
+                n.arguments if n.type == "function" else n.content, level + 1):
+            return True
+    return False
+
+
+def _has_fn(nodes, names) -> bool:
+    for n in nodes:
+        if n.type == "function" and (n.lower_name in names or _has_fn(n.arguments, names)):
+            return True
+        if n.type in ("() block", "[] block", "{} block") and _has_fn(n.content, names):
             return True
     return False
 
@@ -228,11 +245,15 @@ def _css(css: str, ctx: _Ctx, rel_dir: str = "", depth: int = 0) -> str:
                 target = url_arg(n) or ""
             j += 1
         target = (target or "").strip()
+        if not target:
+            return "", j + 1  # no target: nothing to load
         if _is_font_css(target):
             return f"@import url({_quoted(target)});", j + 1
         return _stylesheet(target, ctx, rel_dir, depth) or "", j + 1
 
-    def write(nodes, font: bool = False, image_set: bool = False) -> str:
+    def write(nodes, font: bool = False, image_set: bool = False, level: int = 0) -> str:
+        if level > MAX_CSS_DEPTH:
+            raise UnsafePage(f"CSS nested deeper than {MAX_CSS_DEPTH} levels")
         out: list[str] = []
         i = 0
         face = False  # the next {} block is an @font-face body
@@ -244,7 +265,10 @@ def _css(css: str, ctx: _Ctx, rel_dir: str = "", depth: int = 0) -> str:
                 out.append(text)
                 continue
             if t == "comment":
-                piece = ""
+                piece = "/**/"  # keeps tokens apart (`0/**/auto`); the text is dropped
+            elif t == "literal" and n.value == ";":
+                face = False
+                piece = ";"
             elif t == "at-keyword":
                 face = n.lower_value == "font-face"
                 piece = _leaf(n)
@@ -255,16 +279,19 @@ def _css(css: str, ctx: _Ctx, rel_dir: str = "", depth: int = 0) -> str:
             elif t == "function" and n.lower_name == "url":
                 arg = url_arg(n)
                 piece = url_in(arg, font) if arg is not None else "none"
+            elif t == "function" and n.lower_name in _IMAGE_SET and _has_fn(n.arguments, _SUBSTITUTED):
+                piece = "none"  # var()/env()/attr() can hand image-set a string we cannot see
             elif t == "function":
-                inner = write(n.arguments, font, n.lower_name in ("image-set", "-webkit-image-set"))
+                inner = write(n.arguments, font, n.lower_name in _IMAGE_SET, level + 1)
                 piece = _leaf(tinycss2.ast.IdentToken(0, 0, n.name)) + "(" + inner + ")"
             elif t == "{} block":
-                piece = "{" + write(n.content, font or face) + "}"
+                piece = "{" + write(n.content, font or face, False, level + 1) + "}"
                 face = False
             elif t in ("() block", "[] block"):
-                piece = n.type[0] + write(n.content, font, image_set) + n.type[1]
+                piece = n.type[0] + write(n.content, font, image_set, level + 1) + n.type[1]
             elif t == "error":
-                piece = _CLOSERS.get(n.kind) or ("none" if n.kind == "bad-url" else " ")
+                # a bad url makes its declaration invalid in Chrome; an unknown word does the same
+                piece = _CLOSERS.get(n.kind) or (" gslider-bad-url " if n.kind == "bad-url" else " ")
             elif t == "literal" and n.value in ("<!--", "-->"):
                 piece = ""
             else:
@@ -278,7 +305,7 @@ def _css(css: str, ctx: _Ctx, rel_dir: str = "", depth: int = 0) -> str:
             i += 1
         return "".join(out)
 
-    out = write(tinycss2.parse_component_value_list(css, skip_comments=True))
+    out = write(tinycss2.parse_component_value_list(css))
     return _SURROGATE.sub("\ufffd", out)  # tinycss2 keeps a lone surrogate escape; CSS reads U+FFFD
 
 
@@ -389,8 +416,9 @@ def _sanitize_soup(soup: BeautifulSoup, ctx: _Ctx) -> None:
     for tag in soup.find_all("meta"):
         if any(a.lower() == "http-equiv" for a in tag.attrs):
             tag.decompose()
-    for tag in soup.find_all(["set", "animate"]):
-        if (tag.get("attributename") or tag.get("attributeName") or "").lower() in ("href", "xlink:href", "src"):
+    for tag in soup.find_all(["set", "animate", "animatetransform", "animatemotion", "animatecolor"]):
+        if (tag.get("attributename") or tag.get("attributeName") or "").lower() in (
+                "href", "xlink:href", "src", *_CSS_ATTRS):
             tag.decompose()
 
     for link in soup.find_all("link"):

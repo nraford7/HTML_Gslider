@@ -409,7 +409,7 @@ def test_svg_data_uri_with_parens_and_quotes_survives(folder):
 
 def test_comment_quote_does_not_desync_strings(folder):
     out = _clean("<style>/* don't */ .a::after{content:'<b>'} /* <i> */</style>", folder)
-    assert 'content:"\\3c b>"' in out and "<i" not in out
+    assert 'content:"\\3c b>"' in out and "<i" not in out and "/**/" in out
 
 
 def test_cdo_kept_inside_strings(folder):
@@ -421,12 +421,12 @@ def _style(out: str) -> str:
     return re.search(r"<style>(.*?)</style>", out, re.S).group(1)
 
 
-def test_commented_import_and_url_left_alone(folder):
+def test_commented_import_and_url_not_loaded(folder):
     refused = []
     css = ("/* @import url('https://fonts.googleapis.com/css2?family=Inter') */ .x{background:#0cc}"
            " /* url(old.png) */ a::after{content:'url(x.png)'}")
     out = _style(_clean(f"<style>{css}</style>", folder, refused))
-    assert out == ' .x{background:#0cc}  a::after{content:"url(x.png)"}' and refused == []
+    assert out == '/**/ .x{background:#0cc} /**/ a::after{content:"url(x.png)"}' and refused == []
 
 
 def test_digit_escapes_in_selectors_kept(folder):
@@ -442,7 +442,7 @@ def test_escaped_quote_in_selector_does_not_hide_urls(folder):
 def test_bad_url_becomes_none_and_later_urls_rewritten(folder, tmp_path):
     secret = (tmp_path / "secret" / "s.png").as_uri()
     out = _style(_clean(f"<style>.a{{background:url(a\"b)}} .b{{background:url({secret})}}</style>", folder))
-    assert "secret" not in out and out.count("none") == 2
+    assert "secret" not in out and "gslider-bad-url" in out and "background:none" in out
 
 
 def test_escaped_image_set_strings_rewritten(folder, tmp_path):
@@ -638,3 +638,85 @@ def test_random_css_has_no_tag_start_and_settles(folder):
         for body in re.findall(r"<style>(.*?)</style>", out, re.S):
             assert not re.search(r"<[A-Za-z/!?]", body), (css, body)
         assert _clean(out, folder) == out, css
+
+
+def _tokens(css: str) -> list:
+    import tinycss2
+    def flat(nodes):
+        out = []
+        for n in nodes:
+            if n.type in ("comment", "whitespace"):
+                continue
+            if n.type == "function" and n.lower_name == "url":
+                out.append(("url", flat(n.arguments)[0][1]))  # url("x") is url(x)
+            elif n.type == "function":
+                out += [("fn", n.lower_name), *flat(n.arguments), ")"]
+            elif n.type.endswith("block"):
+                out += [n.type, *flat(n.content)]
+            else:
+                out.append((n.type, getattr(n, "value", None)))
+        return out
+    return flat(tinycss2.parse_component_value_list(css))
+
+
+def test_realistic_css_keeps_its_meaning(folder):
+    css = (r"""@charset "utf-8";/*! tw */.\32xl\:grid-cols-4{grid-template-columns:repeat(4,minmax(0,1fr))}"""
+           r""".font-\[\'Inter\'\]{font-family:'Inter'}@media (min-width:640px) and (width<=2000px)"""
+           r"""{.sm\:p-4{padding:1rem!important}}@supports (display:grid){.g{display:grid}}"""
+           r""":root{--j:{"a":1;"b":[2]};--c:#fff}.m{margin:0/**/auto;font:12px/**/Arial}"""
+           r"""@keyframes k{0%{opacity:0}100%{opacity:1}}a[href^="http"]::after{content:"\201C \"q\""}"""
+           r""":is(.a,.b):where(p)>span{color:red}@layer base{h1{font-weight:700}}"""
+           r"""@font-face{font-family:X;src:local("X"),url(https://fonts.gstatic.com/s/x.woff2) format("woff2");"""
+           r"""unicode-range:U+0000-00FF}""")
+    out = _style(_clean(f"<style>{css}</style>", folder))
+    assert _tokens(out) == _tokens(css)
+    assert "0/**/auto" in out and "12px/**/Arial" in out
+
+
+def test_cr_and_form_feed_in_strings_escaped(folder):
+    out = _style(_clean(r'<style>a::after{content:"x\d y\c z";color:red}</style>', folder))
+    assert out == r'a::after{content:"x\d y\c z";color:red}'
+
+
+def test_image_set_with_var_or_env_becomes_none(folder, tmp_path):
+    secret = "../secret/s.png"
+    for css in (f'.t{{background:image-set(var(--no, "{secret}") 1x)}}',
+                f'.t{{--x:"{secret}";background:image-set(var(--x) 1x)}}',
+                f'.t{{background:-webkit-image-set(env(no, "{secret}") 1x)}}'):
+        out = _style(_clean(f"<style>{css}</style>", folder))
+        assert "image-set" not in out and "background:none" in out, out
+
+
+def test_svg_animations_of_css_urls_removed(folder):
+    out = _clean("<svg><rect><set attributeName='mask' to='url(http://127.0.0.1/a.png)'/>"
+                 "<animate attributeName='clip-path' values='url(a.png);url(b.png)' dur='1s'/>"
+                 "<animate attributeName='opacity' values='0;1' dur='1s'/></rect></svg>", folder)
+    soup = sanitize.parse(out)
+    assert not soup.find("set") and [a.get("attributeName") or a.get("attributename") for a in soup.find_all("animate")] == ["opacity"]
+
+
+@pytest.mark.parametrize("attr", ["stroke", "clip-path", "mask", "filter", "marker-start", "cursor"])
+def test_svg_presentation_attributes_rewritten(folder, tmp_path, attr):
+    out = _clean(f"<svg><rect {attr}='url(../secret/s.png)'/></svg>", folder)
+    assert "secret" not in out
+
+
+def test_bad_url_keeps_declaration_invalid(folder):
+    out = _style(_clean('<style>.a{background:red;background:url(a"b)}</style>', folder))
+    assert "background:red" in out and "gslider-bad-url" in out
+
+
+def test_font_face_flag_ends_at_semicolon(folder):
+    out = _style(_clean("<style>@font-face; .g{background:url(https://fonts.gstatic.com/s/x.woff2)}</style>", folder))
+    assert "gstatic" not in out
+
+
+def test_import_without_target_dropped(folder):
+    refused = []
+    out = _style(_clean("<style>@import layer(x); a{b:c}</style>", folder, refused))
+    assert "@import" not in out and refused == []
+
+
+def test_deep_css_nesting_is_unsafe_page(folder):
+    with pytest.raises(sanitize.UnsafePage):
+        _clean("<style>a{b:" + "(" * 3000 + ")" * 3000 + "}</style>", folder)
