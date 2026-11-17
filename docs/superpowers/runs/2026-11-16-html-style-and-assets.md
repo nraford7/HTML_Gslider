@@ -1,6 +1,6 @@
 # Run: html-style-and-assets
 Instruction: "A then B with /do-it" (A: a mode that recreates the HTML's own look in Google Slides: lay each slide out in headless Chrome, read every element's position, font, size and colour, recreate as editable boxes; template mode kept as an option. B: remove link-sharing or delete assets right after insertion; fetch images linked by URL or relative path; native Slides tables for tables.)
-Stage: committing
+Stage: done
 Route: HEAVY (router: MEDIUM — hard trigger: Drive sharing permissions; BR2 REV1 NOV2 INT1 FC1; no lens) + escalated to HEAVY at code pass 2: surviving BLOCKER (parser differential)
 Spec: docs/superpowers/specs/2026-11-16-html-style-and-assets-design.md   Plan: docs/superpowers/plans/2026-11-16-html-style-and-assets.md
 Agency project: 01a1e58b-a273-7ea7-a9ab-5a7c2d2c4aa1 (T3 -c3a9-7069, T4 -c3a9-7f75, T5 -c3aa-72b8, T6 -c3aa-78db, T7 -c3aa-70df, T8 -c3aa-7d7b)
@@ -40,3 +40,4 @@ Pass 10 [code:html-style-assets]: 0B/2S/3C/0R · fixed 3/3 prior · velocity ↓
 - Public repo: no company, client or personal names or paths in any committed file. The private reference deck is referred to only as GSLIDER_REFERENCE_HTML.
 - Codex quota exhausted until 2026-11-19: independent passes use Fable subagents.
 - Live html build (reference deck): PASS, 15/15 native, coverage 0, overflow 0, all 15 assets revoked and verified private; image difference 6.4-13.5 (0-255).
+- Final live (a6c167a): html 104 s, 15/15 native, check ok, 17 files private; template 15 slides (fallback 5, 11: text overflow), check ok, 9 files private. unshare-assets: 23 files, all already private. Merged to main 9382e07 and pushed.
