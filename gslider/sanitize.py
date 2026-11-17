@@ -15,7 +15,7 @@ What it does:
   a remote one is kept only from https://fonts.googleapis.com. Every other `<link>` is dropped.
 - Images: `img[src]`, `img[srcset]`, `source[srcset]`, `input[type=image][src]`, SVG
   `image` / `feImage` `href` and `xlink:href`, `video[poster]`, the `background` attribute
-  and every CSS `url(...)` (style attributes, SVG presentation attributes, `<style>`
+  and every CSS `url(...)` (`style` and SVG presentation attributes, `<style>`
   blocks, inlined stylesheets, `image-set()` strings) go through `fetch.resolve_image`
   (template-style rules). Accepted bytes become `data:` URIs. A refused one becomes
   nothing: a transparent pixel for `img`/`input`, `none` in CSS, `local()` in a font src;
@@ -25,17 +25,18 @@ What it does:
   https://fonts.googleapis.com and https://fonts.gstatic.com (fonts only).
 - A local font in `@font-face` (inside base_dir, WOFF/WOFF2/TTF/OTF bytes) is inlined.
 - Other URL attributes (media `src`, `use` to another file, form actions, ...) are removed.
-- CSS escapes that spell a letter (`\\75 rl(`) are decoded first, so they cannot
-  hide a `url(`.
+- CSS is read with tinycss2 (the CSS Syntax spec tokenizer Chrome follows), so escapes
+  (`\\75 rl(`, `image\\2d set(`), comments, strings and bad urls mean what they mean to
+  Chrome. The CSS is written back from the tokens: comments and `<!--` / `-->` dropped,
+  every string and url quoted with `"`, `\\`, newline and `<` escaped, a `<` delimiter
+  never directly before a letter, `/`, `!` or `?`. So style text has no `<` that could
+  open a tag (bs4 writes style text raw, and inside SVG or MathML Chrome would read one).
+  A bad url (`url(a"b)`) loads nothing in Chrome and becomes `none`.
 - The deck is parsed with html5lib (a WHATWG HTML5 parser, much closer to Chrome than
   html.parser), so `<!-->` and similar cannot hide markup. Comments, CDATA, processing
   instructions, every `<meta http-equiv>`, the MathML `mglyph` / `malignmark`, and `noscript`,
   `noframes`, `fencedframe` (Chrome runs with scripts on, so it never shows noscript) are
   removed. `xmp` and `plaintext` become `pre` (their raw text cannot round-trip).
-- Style text: bs4 writes it raw, and inside SVG or MathML a `<` there would be read back as
-  a tag. So a `<` that could open a tag (before a letter, `/`, `!` or `?`) becomes the CSS
-  escape `\\3c ` inside a string or url(), and `< ` (a space added, same CSS) elsewhere, as
-  in `1px< width`. The CSS-ignored `<!--` marker is removed.
 - html5lib drops the first newline after `<pre>`, `<textarea>` and `<listing>`; it is written
   back so the text Chrome shows does not change.
 - Parse and serialise is not always a fixed point, so the output is parsed and sanitised
@@ -63,6 +64,7 @@ import threading
 import urllib.parse
 from pathlib import Path
 
+import tinycss2
 from bs4 import BeautifulSoup, CData, Comment, Declaration, Doctype, ProcessingInstruction
 
 from gslider import fetch
@@ -78,44 +80,18 @@ MAX_ROUNDS = 4
 _DROP_TAGS = ("script", "iframe", "frame", "frameset", "object", "embed", "portal", "applet", "base", "noembed",
               "mglyph", "malignmark", "noscript", "noframes", "fencedframe")
 _PRE_TAGS = ("pre", "textarea", "listing")
-# in order: a CSS comment, a string or unquoted url(...), the `<!--` marker, a `<` that could open a tag
-_STYLE_LT = re.compile(r"""(?P<c>/\*.*?\*/)|(?P<s>"(?:\\.|[^"\\\n])*(?:"|\Z)|'(?:\\.|[^'\\\n])*(?:'|\Z)"""
-                       r"""|url\(\s*(?!['"])[^)]*\))|(?P<cdo><!--)|<(?=[A-Za-z/!?])""", re.I | re.S)
-
-
-def _style_text(css: str) -> str:
-    """css with no `<` that could open a tag (see the module notes)."""
-    def one(m: re.Match) -> str:
-        if m.group("c"):
-            return _TAG_LT.sub("< ", m.group("c"))
-        if m.group("s"):
-            return m.group("s").replace("<", "\\3c ")
-        return "" if m.group("cdo") else "< "
-    return _STYLE_LT.sub(one, css)
-
-
-_TAG_LT = re.compile(r"<(?=[A-Za-z/!?])")
-
-
 _URL_ATTRS = ("src", "srcset", "href", "xlink:href", "poster", "data", "background", "lowsrc", "dynsrc",
               "action", "formaction", "manifest", "codebase", "longdesc", "ping", "imagesrcset", "srcdoc",
               "archive", "classid", "profile", "cite", "icon", "attributionsrc")
 _IMAGE_HREF_TAGS = ("image", "feimage")
+# attributes Chrome reads CSS url()s from
+_CSS_ATTRS = ("style", "fill", "stroke", "clip-path", "mask", "filter", "marker-start", "marker-mid",
+              "marker-end", "cursor")
+_TAG_START = re.compile(r"[A-Za-z/!?]")
+_SURROGATE = re.compile("[\ud800-\udfff]")
+_CLOSERS = {"}": "}", ")": ")", "]": "]"}
 _FONT_MAGIC = (b"wOF2", b"wOFF", b"\x00\x01\x00\x00", b"OTTO", b"true")
 _FONT_MIME = {b"wOF2": "font/woff2", b"wOFF": "font/woff", b"OTTO": "font/otf"}
-
-# CSS: an escape (\hex{1,6} plus one optional space, or \char)
-_ESCAPE = re.compile(r"\\(?:([0-9a-fA-F]{1,6})[ \t\n\r\f]?|([^\n0-9a-fA-F]))")
-# one of: a comment or string (left as they are), an @font-face block, an @import, a url(...) token
-_CSS_TOKEN = re.compile(
-    r"(?P<skip>/\*.*?(?:\*/|\Z)|\"(?:\\.|[^\"\\\n])*(?:\"|\Z)|'(?:\\.|[^'\\\n])*(?:'|\Z))"
-    r"|(?P<face>@font-face\s*\{[^}]*\})"
-    r"|(?P<import>@import\s+(?:url\(\s*(?P<iq>['\"]?)(?P<iurl>.*?)(?P=iq)\s*\)|(?P<sq>['\"])(?P<surl>.*?)(?P=sq))[^;]*;?)"
-    r"|(?P<url>url\(\s*(?:(?P<q>['\"])(?P<u>.*?)(?P=q)|(?P<uu>(?:\\.|[^)\\\s'\"])*))\s*\))",
-    re.I | re.S)
-_URL = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.I | re.S)
-_IMAGE_SET_ITEM = re.compile(r"url\([^)]*\)|(['\"])(.*?)\1", re.I | re.S)
-
 
 class _Ctx:
     """One sanitise run: base folder, refusals, and a cache of resolved sources."""
@@ -183,18 +159,6 @@ class _Ctx:
 
 # --------------------------------------------------------------------- CSS
 
-def _unescape(css: str) -> str:
-    """Decode CSS escapes that spell an ASCII letter (the same text to CSS). Not digits:
-    `.\\31 0` is a valid class, `.10` is not; the words to unmask (url, import, ...) have none."""
-    def one(m: re.Match) -> str:
-        try:
-            ch = chr(int(m.group(1), 16)) if m.group(1) else m.group(2)
-        except (ValueError, OverflowError):
-            return m.group(0)
-        return ch if ch.isascii() and ch.isalpha() else m.group(0)
-    return _ESCAPE.sub(one, css)
-
-
 def _rebase(url: str, rel_dir: str) -> str:
     """A url from a stylesheet in rel_dir (relative to the HTML folder), relative to the HTML folder."""
     if not rel_dir:
@@ -211,66 +175,111 @@ def _is_font_css(url: str) -> bool:
     return parts.scheme.lower() == "https" and (parts.hostname or "").lower() == FONT_CSS_HOST
 
 
-_ANY_ESCAPE = re.compile(r"\\(?:([0-9a-fA-F]{1,6})[ \t\n\r\f]?|(\n)|(.))", re.S)
+def _quoted(text: str) -> str:
+    """A CSS string for text: `"`, `\\`, newline and `<` escaped."""
+    return '"' + (text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\a ")
+                  .replace("<", "\\3c ")) + '"'
 
 
-def _css_value(text: str) -> str:
-    """The value of a CSS string or url body: every escape decoded (what Chrome loads)."""
-    def one(m: re.Match) -> str:
-        if m.group(1):
-            cp = int(m.group(1), 16)
-            return chr(cp) if 0 < cp <= 0x10FFFF and not 0xD800 <= cp <= 0xDFFF else "\ufffd"
-        return "" if m.group(2) else m.group(3)
-    return _ANY_ESCAPE.sub(one, text)
+def _leaf(node) -> str:
+    """A token as CSS text; an escaped `<` in a name becomes `\\3c `."""
+    return node.serialize().replace("\\<", "\\3c ")
+
+
+def _has_url(nodes) -> bool:
+    for n in nodes:
+        if n.type == "url" or (n.type == "error" and n.kind == "bad-url"):
+            return True
+        if n.type == "function" and n.lower_name in ("url", "image-set", "-webkit-image-set"):
+            return True
+        if n.type in ("function", "() block", "[] block", "{} block") and _has_url(n.arguments
+                                                                                   if n.type == "function"
+                                                                                   else n.content):
+            return True
+    return False
 
 
 def _css(css: str, ctx: _Ctx, rel_dir: str = "", depth: int = 0) -> str:
-    """CSS with every url() rewritten (see the module doc)."""
-    css = _unescape(css)
-
-    def quoted(u: str) -> str:
-        return '"' + u.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\a ") + '"'
+    """CSS with every url() rewritten, written back from tinycss2 tokens (see the module doc)."""
 
     def url_in(value: str, font: bool) -> str:
-        v = _css_value(value.strip())
+        v = value.strip()
         if v.startswith("#"):
-            return f"url({quoted(v)})"  # an in-page reference
+            return f"url({_quoted(v)})"  # an in-page reference
         if font:
             got = ctx.font(_rebase(v, rel_dir))
-            return f"url({quoted(got)})" if got else 'local("gslider-not-loaded")'
+            return f"url({_quoted(got)})" if got else 'local("gslider-not-loaded")'
         got = ctx.image(_rebase(v, rel_dir))
-        return f"url({quoted(got)})" if got else "none"
+        return f"url({_quoted(got)})" if got else "none"
 
-    def token(m: re.Match) -> str:
-        if m.group("skip"):
-            return m.group("skip")
-        if m.group("face"):
-            return _URL.sub(lambda u: url_in(u.group(2), True), m.group("face"))
-        if m.group("import"):
-            target = _css_value((m.group("iurl") if m.group("iurl") is not None else m.group("surl")) or "")
-            if _is_font_css(target):
-                return f"@import url({quoted(target.strip())});"
-            return _stylesheet(target, ctx, rel_dir, depth) or ""
-        return url_in(m.group("u") if m.group("u") is not None else m.group("uu"), False)
+    def url_arg(fn) -> str | None:
+        """The string of url("..."), else None."""
+        args = [a for a in fn.arguments if a.type not in ("whitespace", "comment")]
+        return args[0].value if len(args) == 1 and args[0].type == "string" else None
 
-    return _CSS_TOKEN.sub(token, _image_set_strings(css))
-
-
-def _image_set_strings(css: str) -> str:
-    """image-set("a.png" 1x) -> image-set(url("a.png") 1x): bare strings there load images too."""
-    out, last = [], 0
-    for m in re.finditer(r"(?:-webkit-)?image-set\(", css, re.I):
-        if m.start() < last:
-            continue
-        j, depth = m.end(), 1
-        while j < len(css) and depth:
-            depth += {"(": 1, ")": -1}.get(css[j], 0)
+    def import_rule(nodes, i) -> tuple[str, int]:
+        """(@import replacement, index after its `;`) for the at-keyword at nodes[i]."""
+        j, target = i + 1, None
+        while j < len(nodes) and not (nodes[j].type == "literal" and nodes[j].value == ";"):
+            n = nodes[j]
+            if target is None and n.type in ("string", "url"):
+                target = n.value
+            elif target is None and n.type == "function" and n.lower_name == "url":
+                target = url_arg(n) or ""
             j += 1
-        inner = _IMAGE_SET_ITEM.sub(
-            lambda s: f"url({s.group(1)}{s.group(2)}{s.group(1)})" if s.group(1) else s.group(0), css[m.end():j])
-        out.append(css[last:m.end()] + inner)
-        last = j
-    return "".join(out) + css[last:]
+        target = (target or "").strip()
+        if _is_font_css(target):
+            return f"@import url({_quoted(target)});", j + 1
+        return _stylesheet(target, ctx, rel_dir, depth) or "", j + 1
+
+    def write(nodes, font: bool = False, image_set: bool = False) -> str:
+        out: list[str] = []
+        i = 0
+        face = False  # the next {} block is an @font-face body
+        while i < len(nodes):
+            n = nodes[i]
+            t = n.type
+            if t == "at-keyword" and n.lower_value == "import":
+                text, i = import_rule(nodes, i)
+                out.append(text)
+                continue
+            if t == "comment":
+                piece = ""
+            elif t == "at-keyword":
+                face = n.lower_value == "font-face"
+                piece = _leaf(n)
+            elif t == "url":
+                piece = url_in(n.value, font)
+            elif t == "string":
+                piece = url_in(n.value, False) if image_set else _quoted(n.value)
+            elif t == "function" and n.lower_name == "url":
+                arg = url_arg(n)
+                piece = url_in(arg, font) if arg is not None else "none"
+            elif t == "function":
+                inner = write(n.arguments, font, n.lower_name in ("image-set", "-webkit-image-set"))
+                piece = _leaf(tinycss2.ast.IdentToken(0, 0, n.name)) + "(" + inner + ")"
+            elif t == "{} block":
+                piece = "{" + write(n.content, font or face) + "}"
+                face = False
+            elif t in ("() block", "[] block"):
+                piece = n.type[0] + write(n.content, font, image_set) + n.type[1]
+            elif t == "error":
+                piece = _CLOSERS.get(n.kind) or ("none" if n.kind == "bad-url" else " ")
+            elif t == "literal" and n.value in ("<!--", "-->"):
+                piece = ""
+            else:
+                piece = _leaf(n)
+            if not piece:
+                i += 1
+                continue
+            if out and out[-1].endswith("<") and _TAG_START.match(piece):
+                out.append(" ")
+            out.append(piece)
+            i += 1
+        return "".join(out)
+
+    out = write(tinycss2.parse_component_value_list(css, skip_comments=True))
+    return _SURROGATE.sub("\ufffd", out)  # tinycss2 keeps a lone surrogate escape; CSS reads U+FFFD
 
 
 def _stylesheet(href: str, ctx: _Ctx, rel_dir: str = "", depth: int = 0) -> str | None:
@@ -405,7 +414,6 @@ def _sanitize_soup(soup: BeautifulSoup, ctx: _Ctx) -> None:
 
     for style in soup.find_all("style"):
         style.string = _css("".join(str(c) for c in style.contents), ctx)
-        style.string = _style_text(style.string)
 
     for tag in soup.find_all(True):
         name = tag.name.lower()
@@ -420,7 +428,7 @@ def _sanitize_soup(soup: BeautifulSoup, ctx: _Ctx) -> None:
             if not isinstance(value, str):
                 continue
             if low not in _URL_ATTRS:
-                if re.search(r"url\(|image-set\(", _unescape(value), re.I):
+                if low in _CSS_ATTRS and _has_url(tinycss2.parse_component_value_list(value)):
                     tag[attr] = _css(value, ctx)
                 continue
             v = value.strip()

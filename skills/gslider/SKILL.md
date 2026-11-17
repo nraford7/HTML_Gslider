@@ -19,7 +19,7 @@ cd "$GSLIDER_HOME" && python3 -m gslider.cli --help
 Check each line; do only the missing ones.
 
 1. Repo present: `test -d "$GSLIDER_HOME/gslider"`, else `gh repo clone nraford7/HTML_Gslider "$GSLIDER_HOME"`.
-2. Python deps: `python3 -c "import bs4, html5lib, PIL, yaml, pptx, fontTools"`, else `python3 -m pip install --user -e "$GSLIDER_HOME"`.
+2. Python deps: `python3 -c "import bs4, html5lib, tinycss2, PIL, yaml, pptx, fontTools"`, else `python3 -m pip install --user -e "$GSLIDER_HOME"`.
 3. `gws` CLI authenticated: `gws drive files list --params '{"pageSize":1}'` returns JSON. If not, the user runs `gws auth login` themselves.
 4. Google Chrome installed (html style measures every slide with it; both styles render fallback slides with it).
 5. Base deck: `test -f ~/.config/gslider/config.json`, else `python3 -m gslider.cli init-base`. This creates "HTML_Gslider base (do not edit)" in the user's Drive. Never delete it.

@@ -11,6 +11,7 @@ license = "MIT"
 dependencies = [
     "beautifulsoup4",
     "html5lib",
+    "tinycss2",
     "Pillow",
     "PyYAML",
     "python-pptx",

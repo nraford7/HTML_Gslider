@@ -393,7 +393,7 @@ def test_style_keeps_media_ranges_and_cdo(folder):
 
 def test_style_strings_and_urls_escape_less_than(folder):
     out = _clean("<style>p::after{content:'<b>'} a{background:url(data:image/svg+xml,<svg/>)}</style>", folder)
-    assert "content:'\\3c b>'" in out and 'url("data:image/svg+xml,\\3c svg/>")' in out
+    assert 'content:"\\3c b>"' in out and 'url("data:image/svg+xml,\\3c svg/>")' in out
 
 
 def test_svg_data_uri_with_parens_and_quotes_survives(folder):
@@ -409,7 +409,7 @@ def test_svg_data_uri_with_parens_and_quotes_survives(folder):
 
 def test_comment_quote_does_not_desync_strings(folder):
     out = _clean("<style>/* don't */ .a::after{content:'<b>'} /* <i> */</style>", folder)
-    assert "content:'\\3c b>'" in out and "/* < i> */" in out
+    assert 'content:"\\3c b>"' in out and "<i" not in out
 
 
 def test_cdo_kept_inside_strings(folder):
@@ -426,12 +426,47 @@ def test_commented_import_and_url_left_alone(folder):
     css = ("/* @import url('https://fonts.googleapis.com/css2?family=Inter') */ .x{background:#0cc}"
            " /* url(old.png) */ a::after{content:'url(x.png)'}")
     out = _style(_clean(f"<style>{css}</style>", folder, refused))
-    assert out == css and refused == []
+    assert out == ' .x{background:#0cc}  a::after{content:"url(x.png)"}' and refused == []
 
 
 def test_digit_escapes_in_selectors_kept(folder):
     css = r".\31 0{color:red} .\32xl\:grid-cols-4{display:grid}"
-    assert _style(_clean(f"<style>{css}</style>", folder)) == css
+    assert _style(_clean(f"<style>{css}</style>", folder)) == r".\31 0{color:red} .\32 xl\:grid-cols-4{display:grid}"
+
+
+def test_escaped_quote_in_selector_does_not_hide_urls(folder):
+    out = _style(_clean(r"<style>.a\'b{} .bg-\[url\(\'x\'\)\]{} .c{background:url(img/ok.png)}</style>", folder))
+    assert 'url("data:image/png;base64,' in out
+
+
+def test_bad_url_becomes_none_and_later_urls_rewritten(folder, tmp_path):
+    secret = (tmp_path / "secret" / "s.png").as_uri()
+    out = _style(_clean(f"<style>.a{{background:url(a\"b)}} .b{{background:url({secret})}}</style>", folder))
+    assert "secret" not in out and out.count("none") == 2
+
+
+def test_escaped_image_set_strings_rewritten(folder, tmp_path):
+    secret = (tmp_path / "secret" / "s.png").as_uri()
+    out = _clean(f'<style>.a{{background:image\\2d set("{secret}" 1x)}}</style>'
+                 f'<p style=\'background:-webkit-image\\2d set("{secret}" 1x)\'>', folder)
+    assert "secret" not in out
+
+
+def test_unclosed_image_set_in_comment_harmless(folder):
+    out = _style(_clean('<style>/* image-set( */ a{font-family:"Inter"} b::after{content:"x"}</style>', folder))
+    assert 'font-family:"Inter"' in out and 'content:"x"' in out
+
+
+def test_class_with_url_text_untouched(folder):
+    out = _clean("<div class=\"bg-[url('img/ok.png')]\" data-x=\"url(x)\"></div>", folder)
+    soup = sanitize.parse(out)
+    assert soup.div["class"] == ["bg-[url('img/ok.png')]"] and soup.div["data-x"] == "url(x)"
+
+
+def test_string_import_inlines_local_file(folder):
+    (folder / "s.css").write_text(".s{color:red}")
+    out = _style(_clean('<style>a::after{content:"q"} @import "s.css"; b{c:d}</style>', folder))
+    assert ".s{color:red}" in out and 'content:"q"' in out
 
 
 def test_hash_url_requoted(folder):
@@ -446,7 +481,7 @@ def test_unquoted_url_with_escaped_parens(folder, tmp_path):
 
 
 def test_string_open_at_end_of_style(folder):
-    assert _style(_clean("<style>a::after{content:\"<b>", folder)) == 'a::after{content:"\\3c b>'
+    assert _style(_clean("<style>a::after{content:\"<b>", folder)).startswith('a::after{content:"\\3c b>"')
 
 
 def test_requoted_url_escapes_backslash_and_newline(folder):
@@ -590,3 +625,16 @@ def test_media_range_still_applies(folder, tmp_path):
 <div class="box"></div></div></body></html>""")
     m = measure.measure_slide(page, 1, tmp_path / "m")
     assert _area(Image.open(m["plate"]).convert("RGB"), (120, 420, 280, 580)) == {GREEN}
+
+
+def test_random_css_has_no_tag_start_and_settles(folder):
+    import random
+    rnd = random.Random(7)
+    parts = ["<", "a", "/", "!", "?", "\\", "'", '"', "(", ")", "{", "}", "url(", "image-set(", "/*", "*/",
+             "<!--", "-->", "\n", " ", "#", "3c ", "x.png", "@import ", ";", "\\2d ", "svg"]
+    for _ in range(300):
+        css = "".join(rnd.choice(parts) for _ in range(rnd.randint(1, 30)))
+        out = _clean(f"<svg><style>{css}</style></svg><style>{css}</style>", folder)
+        for body in re.findall(r"<style>(.*?)</style>", out, re.S):
+            assert not re.search(r"<[A-Za-z/!?]", body), (css, body)
+        assert _clean(out, folder) == out, css
