@@ -747,3 +747,40 @@ def test_deep_nesting_inside_image_set_is_unsafe_page(folder):
 def test_bad_url_never_becomes_a_valid_word(folder, css):
     out = _style(_clean(f"<style>{css}</style>", folder))
     assert out.count("url(gslider bad)") == 1
+
+
+@pytest.mark.parametrize("fn", ['if(media(width > 0): "../secret/s.png"; else: "x.png")', 'inherit(--x)',
+                                'something-new("../secret/s.png")'])
+def test_image_set_with_unknown_function_becomes_none(folder, fn):
+    out = _style(_clean(f"<style>.t{{background:image-set({fn} 1x)}}</style>", folder))
+    assert out == ".t{background:none}"
+
+
+def test_image_set_with_gradient_kept(folder):
+    out = _style(_clean("<style>.t{background:image-set(linear-gradient(rgb(1,2,3),red) 1x)}</style>", folder))
+    assert out == ".t{background:image-set(linear-gradient(rgb(1,2,3),red) 1x)}"
+
+
+def test_inlined_image_in_values_keeps_entry_count(folder):
+    out = _clean("<svg><rect><animate attributeName='mask' values='url(img/ok.png);url(#m);red'"
+                 " keyTimes='0;0.5;1'/></rect></svg>", folder)
+    anim = sanitize.parse(out).find("animate")
+    assert anim["values"] == 'none;url("#m");red'
+
+
+def test_inlined_image_in_to_is_kept(folder):
+    out = _clean("<svg><rect><set attributeName='mask' to='url(img/ok.png)'/></rect></svg>", folder)
+    assert sanitize.parse(out).find("set")["to"].startswith('url("data:image/png;base64,')
+
+
+@pytest.mark.parametrize("target", ["style", "src", "xlink:href"])
+def test_href_src_style_animations_removed(folder, target):
+    out = _clean(f"<svg><rect><animateTransform attributeName='{target}' to='x'/></rect></svg>", folder)
+    assert not sanitize.parse(out).find(lambda t: t.name.lower() == "animatetransform")
+
+
+def test_bad_url_reads_back_as_bad_url(folder):
+    import tinycss2
+    out = _style(_clean('<style>a{b:url(a"b)}</style>', folder))
+    block = [n for n in tinycss2.parse_component_value_list(out) if n.type == "{} block"][0]
+    assert any(n.type == "error" and n.kind == "bad-url" for n in block.content)

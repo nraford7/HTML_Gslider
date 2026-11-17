@@ -34,10 +34,11 @@ What it does:
   open a tag (bs4 writes style text raw, and inside SVG or MathML Chrome would read one).
   A bad url (`url(a"b)`) loads nothing in Chrome; it becomes the bad url
   `url(gslider bad)`, so its declaration stays invalid. An `image-set()` holding `var()`,
-  `env()`, `attr()`, `inherit()` or a custom function becomes `none` (refused; the string it
-  would load is not visible here). SVG animations (`set`, `animate`, ...) of an href, a src
-  or style are removed; for a CSS url attribute their `to`, `from`, `by` and `values` go
-  through the same CSS rewrite.
+  `env()`, `attr()`, `if()`, a custom function or any function other than url, type,
+  gradients, colours and math becomes `none` (refused; the string it would load is not
+  visible here). SVG animations (`set`, `animate`, ...) of an href, a src
+  or style are removed; for a CSS url attribute their `to`, `from`, `by` and each `values`
+  entry go through the same CSS rewrite (an entry that would gain a `;` becomes `none`).
 - The deck is parsed with html5lib (a WHATWG HTML5 parser, much closer to Chrome than
   html.parser), so `<!-->` and similar cannot hide markup. Comments, CDATA, processing
   instructions, every `<meta http-equiv>`, the MathML `mglyph` / `malignmark`, and `noscript`,
@@ -97,7 +98,13 @@ _CSS_ATTRS = ("style", "fill", "stroke", "clip-path", "mask", "filter", "marker-
 _TAG_START = re.compile(r"[A-Za-z/!?]")
 _IMAGE_SET = ("image-set", "-webkit-image-set")
 _ANIMATE_TAGS = ("set", "animate", "animatetransform", "animatemotion", "animatecolor")
-_SUBSTITUTED = ("var", "env", "attr", "inherit")  # and every custom function (--name())
+# functions image-set() may hold; any other one (var, env, attr, if, inherit, --custom, ...)
+# could hand it a string we cannot see
+_IMAGE_SET_OK = frozenset(("url", "type", "image-set", "-webkit-image-set", "linear-gradient",
+                           "radial-gradient", "conic-gradient", "repeating-linear-gradient",
+                           "repeating-radial-gradient", "repeating-conic-gradient", "-webkit-linear-gradient",
+                           "-webkit-radial-gradient", "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch",
+                           "oklab", "oklch", "color", "color-mix", "calc", "min", "max", "clamp"))
 _SURROGATE = re.compile("[\ud800-\udfff]")
 _CLOSERS = {"}": "}", ")": ")", "]": "]"}
 _FONT_MAGIC = (b"wOF2", b"wOFF", b"\x00\x01\x00\x00", b"OTTO", b"true")
@@ -210,15 +217,15 @@ def _has_url(nodes, level: int = 0) -> bool:
     return False
 
 
-def _has_fn(nodes, names, level: int = 0) -> bool:
-    """A function in names, or a custom function (`--f()`), anywhere in nodes."""
+def _has_other_fn(nodes, allowed, level: int = 0) -> bool:
+    """A function not in allowed anywhere in nodes."""
     if level > MAX_CSS_DEPTH:
         raise UnsafePage(f"CSS nested deeper than {MAX_CSS_DEPTH} levels")
     for n in nodes:
-        if n.type == "function" and (n.lower_name in names or n.lower_name.startswith("--")
-                                     or _has_fn(n.arguments, names, level + 1)):
+        if n.type == "function" and (n.lower_name not in allowed
+                                     or _has_other_fn(n.arguments, allowed, level + 1)):
             return True
-        if n.type in ("() block", "[] block", "{} block") and _has_fn(n.content, names, level + 1):
+        if n.type in ("() block", "[] block", "{} block") and _has_other_fn(n.content, allowed, level + 1):
             return True
     return False
 
@@ -286,9 +293,10 @@ def _css(css: str, ctx: _Ctx, rel_dir: str = "", depth: int = 0) -> str:
             elif t == "function" and n.lower_name == "url":
                 arg = url_arg(n)
                 piece = url_in(arg, font) if arg is not None else "none"
-            elif t == "function" and n.lower_name in _IMAGE_SET and _has_fn(n.arguments, _SUBSTITUTED):
+            elif t == "function" and n.lower_name in _IMAGE_SET and _has_other_fn(n.arguments, _IMAGE_SET_OK):
                 ctx.refuse(f"{n.name}({tinycss2.serialize(n.arguments)[:80]})",
-                           "image-set() fed by var(), env(), attr() or a custom function is not loaded")
+                           "image-set() holding var(), if() or another function that may supply an image "
+                           "is not loaded")
                 piece = "none"  # the string it would load is not visible here
             elif t == "function":
                 inner = write(n.arguments, font, n.lower_name in _IMAGE_SET, level + 1)
@@ -316,6 +324,18 @@ def _css(css: str, ctx: _Ctx, rel_dir: str = "", depth: int = 0) -> str:
 
     out = write(tinycss2.parse_component_value_list(css))
     return _SURROGATE.sub("\ufffd", out)  # tinycss2 keeps a lone surrogate escape; CSS reads U+FFFD
+
+
+def _animation_value(value: str, is_list: bool, ctx: _Ctx) -> str:
+    """An SVG animation to/from/by/values with its urls rewritten. Chrome splits `values` on
+    every `;` first, so each entry is rewritten alone, and one that would now hold a `;`
+    (an inlined `data:...;base64`) becomes `none`, keeping the entry count for keyTimes."""
+    def one(v: str) -> str:
+        if not _has_url(tinycss2.parse_component_value_list(v)):
+            return v
+        got = _css(v, ctx)
+        return "none" if is_list and ";" in got else got
+    return ";".join(one(v) for v in value.split(";")) if is_list else one(value)
 
 
 def _stylesheet(href: str, ctx: _Ctx, rel_dir: str = "", depth: int = 0) -> str | None:
@@ -431,8 +451,8 @@ def _sanitize_soup(soup: BeautifulSoup, ctx: _Ctx) -> None:
             tag.decompose()
         elif target in _CSS_ATTRS:
             for a in ("to", "from", "by", "values"):
-                if isinstance(tag.get(a), str) and _has_url(tinycss2.parse_component_value_list(tag[a])):
-                    tag[a] = _css(tag[a], ctx)
+                if isinstance(tag.get(a), str):
+                    tag[a] = _animation_value(tag[a], a == "values", ctx)
 
     for link in soup.find_all("link"):
         rel = [r.lower() for r in (link.get("rel") or [])]
